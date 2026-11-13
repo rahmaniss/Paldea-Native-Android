@@ -395,3 +395,9 @@ Record the frame's passes	フレームのパスを記録
 For slow scenes: close this menu within 3 seconds and stay where the game is slow. Three frames' render passes, with their GPU time where the phone gives it, are saved in Download (a file ending in framegraph.txt). Attach it to your issue.	重い場面向け：3秒以内にこのメニューを閉じ、ゲームが重い場所にとどまってください。3フレーム分の描画パス（端末が対応していればGPU時間付き）がダウンロードに保存されます（framegraph.txt で終わるファイル）。issue に添付してください。
 Recording in 3 seconds: close the menu.	3秒後に記録します：メニューを閉じてください。
 Left: Auto, what the Graphics setting gives, lowered by itself when the phone is hot. Lower: cooler and faster, the 3D softer; text and menus stay sharp.	左端：自動（グラフィック設定どおり、端末が熱いと自動で下げます）。下げるほど発熱が減り速くなり、3Dはやわらかくなります。文字やメニューはくっきりのままです。
+Auto: on for a Mali-G615 on ARM's driver older than r49, which needed it to start	自動：r49より前のARMのドライバーのMali-G615でオン（起動に必要でした）
+Off: the GPU reads the game's uniform data directly (a test for invisible characters and Pokémon; if the game then closes at start, set Auto again)	オフ：GPUがゲームのユニフォームデータを直接読みます（キャラクターやポケモンが見えない問題のテスト。起動時にゲームが閉じる場合は自動に戻してください）
+Animated models: a render target for their capture	アニメーションモデル：キャプチャ用のレンダーターゲット
+Auto: a quick test at each start on ARM's driver decides (the log says which)	自動：ARMのドライバーで起動ごとに短いテストを行い決めます（ログに記録）
+Off: as before v0.35	オフ：v0.35以前と同じ
+On: for a driver that skips the work of a pass with nothing to draw into (invisible characters and Pokémon)	オン：描画先のないパスの処理を省くドライバー向け（キャラクターやポケモンが見えない場合）
