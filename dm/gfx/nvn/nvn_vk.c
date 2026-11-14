@@ -380,6 +380,9 @@ void mtl_init(void) {
     void *tail = opt;
     if (old && x_eds) { fed.pNext = tail; tail = &fed; }
     if (old11 && g_tlsem) { fts.pNext = tail; tail = &fts; }   // (only with its extension enabled: a structure of one that is not is invalid)
+    // Vulkan 1.1 devices: shaderDrawParameters has its own structure there (the 1.1 block is 1.2+); vertex shaders read gl_BaseInstance / gl_BaseVertex (dmsh_xlate Program.cs)
+    VkPhysicalDeviceShaderDrawParametersFeatures fsdp = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES };
+    if (old11) { fsdp.pNext = tail; tail = &fsdp; }
     if (old && x_dynren) { fdr.pNext = tail; tail = &fdr; }
     VkPhysicalDeviceVulkan13Features f13 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, .pNext = opt };
     VkPhysicalDeviceVulkan12Features f12 = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .pNext = old ? tail : (void *)&f13 };
