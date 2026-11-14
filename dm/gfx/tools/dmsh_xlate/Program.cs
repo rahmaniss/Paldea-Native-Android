@@ -39,6 +39,11 @@ static class SwshXlate
         public int QuerySamplerArrayLengthFromPool() => 32;
         public int QueryTextureArrayLengthFromBuffer(int slot) => 32;
         public int QueryTextureArrayLengthFromPool() => 32;
+        // GLSLC vertex shaders read the draw's base vertex / base instance / draw index from c0 +0x640/+0x644/+0x648 (NVN's driver segment). Answered true, the translator
+        //   reads gl_BaseVertex / gl_BaseInstance / gl_DrawID instead (DrawParametersReplace): an indirect draw's arguments are in GPU memory, so the host's c0 copy had
+        //   base instance 0, and GPU-culled draws (Scarlet / Violet, Z-A: a compute pass writes each object's instance into the record) all drew instance 0 - rocks, walls
+        //   and trees missing. For direct draws the values are the ones the host passes to vkCmdDraw*, so nothing changes there (nx2android #220, seedds/nxnative#563)
+        public bool QueryHasConstantBufferDrawParameters() => true;
 
         string Get(string table, int slot) => _job[table] is JsonObject t && t[slot.ToString()] is JsonNode n ? (n is JsonObject o ? (string)o["type"] : (string)n) : null;
         int TexSlot(int handle, int cbufSlot)
