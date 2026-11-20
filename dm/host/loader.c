@@ -579,40 +579,60 @@ static int wide_render_patch(module_t *m, int64_t p0, int64_t p1) {
     LOG("%s: true aspect ratio for %s: the game renders %ux1080 in TV mode, %ux720 handheld (screen %.4f), instead of 16:9 stretched", m->name, WIDE_SITES[si].game, w1080, w720, ratio);
     return 4;
 }
-// 3D render scale for Pokémon Scarlet / Violet 4.0.0 (DM_RES_CAP 0.5 - 1, the menu's slider; read at start). The two mains are one program (same addresses). The game
-//   keeps its 3D buffer's scale in the registry properties 3DBufferWidthScale / HeightScale (keys 0x4aa9ba3dccea94ea / 0x66e7a756352d0d9f) and reads them back in two
-//   places, each multiplying them into a size: main+0xd02808 (the UI size at *(main+0x475a0a0)+0x100 x the scales, via the registry's vtable +0x38; FMUL @+0xd02908 width,
-//   @+0xd0291c height) and the tail of the resolution function main+0xdfa800 (the scales clamped to [0.01, 1], FMUL @+0xdfabf8 width, @+0xdfac04 height: the 3D render
-//   size). Each of the four FMULs becomes BL to a stub in the zero gap after the code (the code ends at +0x343fc90, its page at +0x3440000) that does the FMUL, then
-//   multiplies the result by the slider's value (a word after the stubs), d16 saved on the stack. x30 is free at all four (both functions make calls after them).
-//   Applied only below 1.0 and only at start: whether both sizes are recomputed when the value changes is not known yet, so no live change (and no Adaptive Resolution)
-//   until a phone run shows it. Every word is checked first in the main being loaded (the four FMULs, the gap's zeros)
+// 3D render scale for Pokémon Scarlet / Violet 4.0.0 (DM_RES_CAP 0.5 - 1, the menu's slider; live through dm_paldea_scale_set, which the heat guard uses too). The two
+//   mains are one program (same addresses). The game keeps its 3D buffer's scale in the registry properties 3DBufferWidthScale / HeightScale (keys 0x4aa9ba3dccea94ea /
+//   0x66e7a756352d0d9f). Only two places read them (every other site of the keys is a SET through the registry's vtable +0x10: 0x27b48e4, the DRS controller 0x293dd70 /
+//   0x293ddc0, the scale-mode setter 0x176cc..), each multiplying them into a size: main+0xd02808 (the UI size at *(main+0x475a0a0)+0x100 x the scales, via the
+//   registry's vtable +0x38; FMUL @+0xd02908 width, @+0xd0291c height; called through a pointer) and the tail of the resolution function main+0xdfa800 (the scales clamped
+//   to [0.01, 1], FMUL @+0xdfabf8 width, @+0xdfac04 height: the 3D render size; called from 4 places). Each FMUL becomes BL to a stub in the zero gap after the code
+//   (the code ends at +0x343fc90, its page at +0x3440000) that does the FMUL, then multiplies the result by our value, d16 (and x16 / x17 where used) saved on the stack;
+//   x30 is free at all four (both functions make calls after them). Two words after the stubs: the value asked for (+0x343fd00, written by the host) and the value in
+//   use (+0x343fd04): 0xdfa800's width stub copies the first into the second each time the game computes its render size, and all four multiply by the second, so
+//   0xd02808 always agrees with the last render size whenever it runs, and a change applies at the game's next resolution update. That page stays writable and
+//   executable after the code is sealed (paldea_rwx_open). On by default at 1.0 (exact: x * 1.0); DM_PALDEA_SCALE=0 leaves it out. Every word is checked first
+static volatile uint32_t *g_pal_ask;   // the value asked for (NULL: not applied)
+static uint64_t g_pal_rwx_pg = ~0ull;   // the gap's page, opened after sealing
+void dm_paldea_scale_set(float c) {
+    if (!g_pal_ask || !(c >= 0.5f && c <= 1.0f)) return;
+    uint32_t b, o = __atomic_load_n(g_pal_ask, __ATOMIC_RELAXED); memcpy(&b, &c, 4); if (b == o) return;
+    __atomic_store_n(g_pal_ask, b, __ATOMIC_RELEASE);
+    LOG("Scarlet / Violet 3D render scale %.2f asked for: applies at the game's next resolution update", (double)c);
+}
+int dm_paldea_scale_ready(void) { return g_pal_ask != NULL; }
 static int paldea_scale(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
-    const char *e = getenv("DM_RES_CAP"); float c = e ? (float)atof(e) : 1.0f;
-    if (!(c >= 0.5f && c < 1.0f)) return 0;
+    const char *d = getenv("DM_PALDEA_SCALE"); if (d && !strcmp(d, "0")) return 0;
+    const char *e = getenv("DM_RES_CAP"); float c = e ? (float)atof(e) : 1.0f; if (!(c >= 0.5f && c <= 1.0f)) c = 1.0f;
     static const struct { uint64_t off; uint32_t orig, call; } S[4] = {
-        { 0xd02908, 0x1e210841u, 0x949cf4e2u }, { 0xd0291c, 0x1e210800u, 0x949cf4e3u }, { 0xdfabf8, 0x1e210808u, 0x94991432u }, { 0xdfac04, 0x1e200849u, 0x94991435u } };
-    static const uint32_t code[24] = {   // per site: the FMUL / str d16, [sp, #-16]! / ldr s16, value / fmul sD, sD, s16 / ldr d16, [sp], #16 / ret
-        0x1e210841u, 0xfc1f0ff0u, 0x1c0002d0u, 0x1e300821u, 0xfc4107f0u, 0xd65f03c0u,   // s1 = s2 * s1 (width scale x UI width)
-        0x1e210800u, 0xfc1f0ff0u, 0x1c000210u, 0x1e300800u, 0xfc4107f0u, 0xd65f03c0u,   // s0 = s0 * s1 (height scale x UI height)
-        0x1e210808u, 0xfc1f0ff0u, 0x1c000150u, 0x1e300908u, 0xfc4107f0u, 0xd65f03c0u,   // s8 = s0 * s1 (3D width)
-        0x1e200849u, 0xfc1f0ff0u, 0x1c000090u, 0x1e300929u, 0xfc4107f0u, 0xd65f03c0u }; // s9 = s2 * s0 (3D height)
-    const uint64_t cave = 0x343fc90, lit = cave + sizeof code;   // (the value's word: +0x343fcf0)
-    int ok = m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim && !overlaps_rewrite(m, cave, sizeof code + 4, p0, p1);
+        { 0xd02908, 0x1e210841u, 0x949cf4e2u }, { 0xd0291c, 0x1e210800u, 0x949cf4e3u }, { 0xdfabf8, 0x1e210808u, 0x94991432u }, { 0xdfac04, 0x1e200849u, 0x94991439u } };
+    static const uint32_t code[28] = {
+        0x1e210841u, 0xfc1f0ff0u, 0x1c000370u, 0x1e300821u, 0xfc4107f0u, 0xd65f03c0u,   // s1 = s2 * s1 (width scale x UI width) / str d16, [sp, #-16]! / ldr s16, in use / fmul / ldr d16 / ret
+        0x1e210800u, 0xfc1f0ff0u, 0x1c0002b0u, 0x1e300800u, 0xfc4107f0u, 0xd65f03c0u,   // s0 = s0 * s1 (height scale x UI height)
+        0x1e210808u, 0xa9bf47f0u, 0xfc1f0ff0u, 0x1c0001b0u, 0x100001b0u, 0xbd000210u,   // s8 = s0 * s1 (3D width) / stp x16, x17 / str d16 / ldr s16, asked / adr x16, in use / str s16, [x16]
+        0x1e300908u, 0xfc4107f0u, 0xa8c147f0u, 0xd65f03c0u,                             //   fmul s8, s8, s16 / ldr d16 / ldp x16, x17 / ret
+        0x1e200849u, 0xfc1f0ff0u, 0x1c0000b0u, 0x1e300929u, 0xfc4107f0u, 0xd65f03c0u }; // s9 = s2 * s0 (3D height)
+    const uint64_t cave = 0x343fc90, ask = cave + sizeof code;   // (+0x343fd00 asked, +0x343fd04 in use)
+    int ok = m->text_end <= cave && ask + 8 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && ask + 8 <= lim && !overlaps_rewrite(m, cave, sizeof code + 8, p0, p1);
     for (unsigned i = 0; ok && i < 4; i++) { uint32_t w; memcpy(&w, m->base + S[i].off, 4); ok = S[i].off + 4 <= m->text_end && w == S[i].orig && !overlaps_rewrite(m, S[i].off, 4, p0, p1); }
-    for (unsigned i = 0; ok && i < 25; i++) { uint32_t w; memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
+    for (unsigned i = 0; ok && i < 30; i++) { uint32_t w; memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
     if (!ok) { LOG("[RED] %s: 3D render scale not applied: the four size multiplies or the gap after the code differ, or were rewritten", m->name); return 0; }
-    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &c, 4);
+    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + ask, &c, 4); memcpy(m->base + ask + 4, &c, 4);
     for (unsigned i = 0; i < 4; i++) memcpy(m->base + S[i].off, &S[i].call, 4);
-    LOG("%s: 3D render scale for Scarlet / Violet 4.0.0: %.2f on the game's own (both size computations of 3DBufferWidthScale / HeightScale; set at start)", m->name, (double)c);
+    g_pal_ask = (volatile uint32_t *)(void *)(m->base + ask); g_pal_rwx_pg = ask & ~0x3FFFull;
+    LOG("%s: 3D render scale for Scarlet / Violet 4.0.0: %.2f on the game's own (both size computations of 3DBufferWidthScale / HeightScale; live)", m->name, (double)c);
     return 5;
+}
+// After the code is sealed: the gap's page made writable again (its two value words are written while playing), still executable
+static void paldea_rwx_open(module_t *m) {
+    if (g_pal_rwx_pg == ~0ull || !g_pal_ask || (uint8_t *)(uintptr_t)g_pal_ask < m->base || (uint8_t *)(uintptr_t)g_pal_ask >= m->base + m->size) return;
+    if (mprotect(m->base + g_pal_rwx_pg, 0x4000, PROT_READ | PROT_WRITE | PROT_EXEC)) { LOG("[RED] %s: the render scale's page could not be made writable (%s): the scale stays as set at start", m->name, strerror(errno)); g_pal_ask = NULL; }
+    g_pal_rwx_pg = ~0ull;
 }
 // Widescreen for Pokémon Scarlet / Violet 4.0.0 (DM_ASPECT=wide, the screen's ratio in DM_WIDE_RATIO; DM_WIDE_RENDER=0 leaves it out): the game renders at the
 //   screen's shape. The resolution function main+0xdfa800 picks its size pair from the config object (width x21+0x430, height +0x438, +4 for performance mode 1:
 //   ldr w22 / ldr w23 @+0xdfa860 / +0xdfa864) and publishes it as ResolutionWidth2D / Height2D (the UI layer's size, @+0xdfa8a4 / +0xdfa8f8), as the UI size at
 //   *(main+0x475a0a0)+0x100 and, times 3DBufferWidth/HeightScale, as the 3D render size (its tail; paldea_scale). The height load becomes BL to a stub in the gap
-//   after the code (+0x343fd00, after paldea_scale's) that loads the height and sets the width = height x the ratio (16.16 fixed point, rounded to even, at most
+//   after the code (+0x343fd40, after paldea_scale's) that loads the height and sets the width = height x the ratio (16.16 fixed point, rounded to even, at most
 //   2.4). x16 and x30 are free there (the function calls on right after). Render targets grow with the width (about 25 % at 20:9). Every word is checked first
 static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
@@ -620,7 +640,7 @@ static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     if (!a || strcmp(a, "wide") || (e && atoi(e) <= 0)) return 0;
     double ratio = r ? atof(r) : 0; if (ratio < 16.0 / 9.0 + 0.01) return 0;
     if (ratio > 2.4) ratio = 2.4;
-    const uint64_t site = 0xdfa864, cave = 0x343fd00, lit = cave + 0x20; const uint32_t orig = 0xb9443b17u, call = 0x94991527u;
+    const uint64_t site = 0xdfa864, cave = 0x343fd40, lit = cave + 0x20; const uint32_t orig = 0xb9443b17u, call = 0x94991537u;
     static const uint32_t code[7] = { 0xb9443b17u,   // ldr w23, [x24, #0x438]       (the height, as the game loads it)
         0x180000f0u, 0x1b107ef6u,                    // ldr w16, ratio / mul w22, w23, w16
         0x114042d6u, 0x53117ed6u, 0x531f7ad6u,       // add w22, w22, #0x10000 / lsr w22, w22, #17 / lsl w22, w22, #1   (to the nearest even width)
@@ -761,6 +781,7 @@ static void map_image(module_t *m, const char *dir) {
         uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
         if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
         if (modded) __builtin___clear_cache((char *)m->base, (char *)(m->base + rx));
+        paldea_rwx_open(m);
         if (mprotect(a, m->patch_len, PROT_READ | PROT_EXEC)) die("%s mprotect patch", m->name);
         if (pre > m->patch_len && mprotect(a + m->patch_len, pre - m->patch_len, PROT_NONE)) die("%s mprotect gap", m->name);
         return;
@@ -774,6 +795,7 @@ static void map_image(module_t *m, const char *dir) {
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     if (modded) __builtin___clear_cache((char *)m->base, (char *)(m->base + rx));
+    paldea_rwx_open(m);
     uint64_t po = m->patch_off & ~0x3FFFull;
     if (mprotect(m->base + po, m->size - po, PROT_READ | PROT_EXEC)) die("%s mprotect patch", m->name);
 }

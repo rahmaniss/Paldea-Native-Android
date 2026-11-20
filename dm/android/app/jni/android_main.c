@@ -243,7 +243,12 @@ JNIEXPORT jboolean JNICALL Java_com_nxnative_GameMenu_nativeSetting(JNIEnv *env,
     else if (!strcmp(k, "DM_RES_CAP")) { extern void dm_res_cap_set(float) __attribute__((weak)); extern int dm_res_scale_ready(void);
         float c = v ? (float)atof(v) : 0; const char *g = getenv("DM_GRAPHICS");
         if (c >= 0.5f && c <= 1.0f) setenv("DM_RES_CAP", v, 1); else { unsetenv("DM_RES_CAP"); c = g && !strcmp(g, "lowest") ? 0.50f : g && !strcmp(g, "low") ? 0.55f : 1.0f; }
-        if (&dm_res_cap_set && dm_res_scale_ready()) { dm_res_cap_set(c); fprintf(stderr, "3D render scale: %.0f %% (%s), set while playing\n", c * 100, v ? "chosen" : "Auto"); } else now = 0; }
+        extern void dm_paldea_scale_set(float) __attribute__((weak)); extern int dm_paldea_scale_ready(void) __attribute__((weak));
+        if (&dm_res_cap_set && dm_res_scale_ready()) { dm_res_cap_set(c); fprintf(stderr, "3D render scale: %.0f %% (%s), set while playing\n", c * 100, v ? "chosen" : "Auto"); }
+        else if (&dm_paldea_scale_set && &dm_paldea_scale_ready && dm_paldea_scale_ready()) {   // (Scarlet / Violet: loader.c paldea_scale; Auto = the game's own size, or Lowest's 75 %)
+            if (!v) c = g && !strcmp(g, "lowest") ? 0.75f : 1.0f;
+            dm_paldea_scale_set(c); fprintf(stderr, "3D render scale: %.0f %% (%s), asked while playing\n", c * 100, v ? "chosen" : "Auto"); }
+        else now = 0; }
     else if (!strcmp(k, "DM_RSTICK_SENS")) { extern _Atomic int dm_rstick_pct __attribute__((weak)); int p = v ? atoi(v) : 100; if (p < 25 || p > 400) p = 100; if (&dm_rstick_pct) atomic_store(&dm_rstick_pct, p); else now = 0; }   // (the touch click follows it at once; the game's motors are GameActivity's, GameMenu decides)
     else if (!strcmp(k, "DM_ASPECT")) __atomic_store_n(&dm_aspect_mode, !v ? DM_ASPECT_FIT : !strcmp(v, "20:9") ? DM_ASPECT_20_9 : !strcmp(v, "fill") || !strcmp(v, "wide") ? DM_ASPECT_FILL : DM_ASPECT_FIT, __ATOMIC_RELAXED);
     else if (!strcmp(k, "DM_COLOR")) { extern volatile int dm_color_mode; dm_color_mode = v && !strcmp(v, "vibrant") ? 1 : v && !strcmp(v, "cinematic") ? 2 : 0; }   // (nvn_vk.c color_mode: live)
@@ -702,9 +707,38 @@ static void fps_guard_init(void) {
     if (fps < 30 || (off && !strcmp(off, "0")) || (g && (!strcmp(g, "high") || !strcmp(g, "low") || !strcmp(g, "lowest")))) return;   // (read before the phone's profile fills DM_GRAPHICS in)
     g_fps_guard = fps; fprintf(stderr, "fps guard: %d fps target: a lighter picture whenever it falls short of 30 or the phone runs hot\n", fps);
 }
+// Adreno's own GPU limit (kgsl): the thermal engine caps the clock directly, and Android's thermal status can stay "none" or "light" meanwhile (a Galaxy S25+ held at
+//   160 MHz of 1200, power level 14 of 15, status not raised, 2026-11-20). Returns the cap as a share of the top clock (1: no cap), -1 where it cannot be read
+static float gpu_cap_share(void) {
+    static int ok = 1; if (!ok) return -1;
+    long cap = 0, top = 0; FILE *f = fopen("/sys/class/kgsl/kgsl-3d0/max_gpuclk", "r");
+    if (f) { if (fscanf(f, "%ld", &cap) != 1) cap = 0; fclose(f); }
+    f = fopen("/sys/class/kgsl/kgsl-3d0/gpu_available_frequencies", "r");
+    if (f) { if (fscanf(f, "%ld", &top) != 1) top = 0; fclose(f); }   // (the first, the highest)
+    if (cap <= 0 || top <= 0) { ok = 0; fprintf(stderr, "heat: the GPU's clock limit cannot be read here (not Adreno, or not allowed): Android's thermal status alone\n"); return -1; }
+    return (float)cap / (float)top;
+}
+// The heat guard for Scarlet / Violet, on every Graphics level (from Galar 06df19a / f5a7ec9, as Legends: Arceus's): only heat, never the frame rate. Hot (thermal
+//   status moderate or worse, the throttling forecast at 0.9, or Adreno's GPU held below 60 % of its top clock): the 3D render scale goes to 67 % (or the slider's value
+//   if lower) through loader.c paldea_scale; back to the slider's value after a calm minute. It applies at the game's next resolution update. DM_HEAT_GUARD=0 leaves it out
+static void paldea_heat_guard(void) {
+    extern void dm_paldea_scale_set(float) __attribute__((weak)); extern int dm_paldea_scale_ready(void) __attribute__((weak));
+    static int off = -1, on, calm_n; if (off < 0) { const char *e = getenv("DM_HEAT_GUARD"); off = e && !strcmp(e, "0"); }
+    if (off || !g_th_mgr || !g_th_st || !&dm_paldea_scale_set || !&dm_paldea_scale_ready || !dm_paldea_scale_ready()) return;
+    int st = g_th_st(g_th_mgr); float hr = g_th_hr ? g_th_hr(g_th_mgr, 10) : -1.0f;
+    int hot = st >= 2 || hr >= 0.9f, calm = st <= 1 && (hr < 0 || hr < 0.75f);
+    if (power_saver()) { hot = st >= 1 || hr >= 0.75f; calm = st == 0 && (hr < 0 || hr < 0.6f); }
+    float cs = gpu_cap_share(); if (cs >= 0) { if (cs < 0.6f) hot = 1; if (cs < 0.9f) calm = 0; }   // (the GPU held below 60 % of its top clock: hot whatever the status says)
+    calm_n = calm ? calm_n + 1 : 0;
+    const char *ce = getenv("DM_RES_CAP"); float cap = ce ? (float)atof(ce) : 1.0f; if (!(cap >= 0.5f && cap <= 1.0f)) cap = 1.0f;   // (the slider's value: the guard only ever goes under it)
+    if (hot && !on) { on = 1; calm_n = 0; float h = cap < 0.67f ? cap : 0.67f; dm_paldea_scale_set(h);
+        fprintf(stderr, "heat guard: the phone is hot (thermal status %d, headroom %.2f, GPU limit %.0f %% of its top clock): 3D render scale %d %% until it cools\n", st, (double)hr, cs >= 0 ? cs * 100.0 : -1.0, (int)(h * 100 + 0.5f)); }
+    else if (on && calm_n >= 12) { on = 0; dm_paldea_scale_set(cap); fprintf(stderr, "heat guard: cooled down: 3D render scale %d %% again\n", (int)(cap * 100 + 0.5f)); }
+}
 static void graphics_auto(void) {
     static int mode = 1, cool, slow, held, wait = 12, primed, lv, since; static uint64_t last_fr;
     const char *g = getenv("DM_GRAPHICS");
+    paldea_heat_guard();   // (Scarlet / Violet only: a no-op where loader.c paldea_scale is not applied)
     if (!(g && !strcmp(g, "auto") && g_th_mgr && g_th_st) && !g_fps_guard) return;
     int hot = 0, calm = 1;
     if (g_th_mgr && g_th_st) { int st = g_th_st(g_th_mgr); float hr = g_th_hr ? g_th_hr(g_th_mgr, 10) : -1.0f;
