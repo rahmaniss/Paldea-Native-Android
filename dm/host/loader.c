@@ -496,7 +496,9 @@ static int fps_patch(module_t *m, uint64_t lim, int64_t p0, int64_t p1);
 // DM_SHADOWS=2k. A mod goes in whole or not at all: every site must still hold the game's own bytes and none may be code the rewriter turned into a branch
 #include "builtin_mods.h"
 static int bmod_wanted(const char *name) {
-    if (!strcmp(name, "dynamic_fps")) { const char *e = getenv("DM_FPS_TARGET"); return e && atoi(e) >= 60; }
+    // Dynamic FPS at every frame rate (30 / Auto too), so the menu switches 30 / 60 / Dynamic while playing: the mod steps the game by the time each frame took, and
+    //   the host's hold (hle_nvn.c dyn_tick, dm_fps_live) alone sets the rate. DM_FPS_LIVE=0: at 30 the game's own fixed step, as before (60 then needs a restart)
+    if (!strcmp(name, "dynamic_fps")) { const char *e = getenv("DM_FPS_TARGET"), *l = getenv("DM_FPS_LIVE"); return (e && atoi(e) >= 60) || !(l && !atoi(l)); }
     if (!strcmp(name, "shadows_2k")) { const char *e = getenv("DM_SHADOWS"); return e && !strcasecmp(e, "2k"); }   // (test only: not offered in the menu)
     // DM_SHADOWS=low: the same site as 2K, 512×512 instead of the game's 1024 (a quarter of the shadow map's pixels; a smaller map also leaves the game's GPU
     //   pool more room, where a bigger one takes it from streaming). Not offered in the menu until seen on a phone
@@ -506,6 +508,7 @@ static int bmod_wanted(const char *name) {
 int dm_shadow_off;   // nvn_vk.c draw: DM_SHADOWS=off on Scarlet / Violet 4.0.0's main, the sun shadow pass's draws dropped
 static int g_bmod_fps;   // the frame rate came from a built-in mod: the Sword / Shield patch below is not this game's
 int dm_dynfps;   // hle_nvn.c dyn_tick: Scarlet / Violet's Dynamic FPS is in, presentation is paced in steps of 30 / 60
+extern int dm_fps_live;   // (below: the live target, 30 or 60)
 static int bmod_apply(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     int total = 0;
     for (unsigned i = 0; i < sizeof BUILTIN_MODS / sizeof *BUILTIN_MODS; i++) {
@@ -519,7 +522,10 @@ static int bmod_apply(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
             if ((uint64_t)t->off + t->len > lim || memcmp(m->base + t->off, t->orig, t->len) || overlaps_rewrite(m, t->off, t->len, p0, p1)) bad = s; }
         if (bad >= 0) { LOG("[RED] %s: built-in mod %s not applied: +%#x differs from the game's code or was rewritten", m->name, b->name, b->sites[bad].off); continue; }
         for (int s = 0; s < b->n; s++) memcpy(m->base + b->sites[s].off, b->sites[s].mod, b->sites[s].len);
-        LOG("%s: built-in mod %s applied (%d sites)", m->name, b->name, b->n); total += b->n; if (!strcmp(b->name, "dynamic_fps")) g_bmod_fps = dm_dynfps = 1;
+        LOG("%s: built-in mod %s applied (%d sites)", m->name, b->name, b->n); total += b->n;
+        if (!strcmp(b->name, "dynamic_fps")) { const char *e = getenv("DM_FPS_TARGET"); g_bmod_fps = dm_dynfps = 1;
+            __atomic_store_n(&dm_fps_live, e && atoi(e) >= 60 ? 60 : 30, __ATOMIC_RELAXED);   // (the live rate: the menu's 30 / 60 / Dynamic switch it while playing)
+            LOG("%s: frame rate %d, live (the menu switches 30 / 60 / Dynamic at once)", m->name, dm_fps_live); }
     }
     return total;
 }

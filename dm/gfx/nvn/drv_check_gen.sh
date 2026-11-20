@@ -1,4 +1,4 @@
-# Builds drv_check_spv.h: the driver checks' shaders (GLSL -> SPIR-V 1.0 with glslc; the float check's min becomes NMin through spirv-dis / spirv-as)
+# Builds drv_check_spv.h: the driver checks' shaders (GLSL -> SPIR-V 1.0 with glslc; the float check's max becomes NMax through spirv-dis / spirv-as)
 set -e
 T=$HOME/android-ndk-r27c/shader-tools/linux-x86_64; X=$HOME/spvt/x/usr/bin
 D=$(cd "$(dirname "$0")" && pwd); O=$D/drv_check_spv.h; W=$(mktemp -d)

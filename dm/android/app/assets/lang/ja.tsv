@@ -414,3 +414,5 @@ Resolution	解像度
 Game's own	ゲーム本来
 The game's own: 1080p docked, 720p handheld	ゲーム本来：TVモード1080p、携帯モード720p
 1080p in both modes: handheld's lighter settings at the docked size (from the next start)	両モードで1080p：携帯モードの軽い設定をTVモードのサイズで（次回起動から）
+Dynamic	ダイナミック
+Dynamic: 60 where the phone can, 30 where it cannot, at the full picture; game speed stays right	ダイナミック：可能な所は60、無理な所は30、画質はそのまま。ゲーム速度は正しく保たれます

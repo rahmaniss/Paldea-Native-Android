@@ -1650,7 +1650,8 @@ static void dyn_tick(const win_t *o) {
     double cpu = shown - pw / v;
     { extern _Atomic uint64_t g_nvn_game_work_ns; double w = atomic_load(&g_nvn_game_work_ns) / v; if (w > 0 && w < cpu) cpu = w; }
     double cost = cpu > gpu ? cpu : gpu;
-    int k0 = vs.k; nvn_fstep_next(&vs, shown, cost, 1, 2, 0);
+    int kmin = live_fps() == 30 ? 2 : 1;   // (the menu's frame rate, live: 30 holds every frame two vsyncs; 60 / Dynamic let the hold go to one where the frame fits)
+    int k0 = vs.k; nvn_fstep_next(&vs, shown, cost, kmin, 2, 0);
     atomic_store(&g_fs_k, vs.k);
     if (k0 && vs.k != k0 && nlog < 40) LOG("[nvn] dynamic fps: %d fps at present %llu (cost %.2f slots of 16.67 ms, GPU %.2f)%s", 60 / vs.k, (unsigned long long)o->presents, cost, gpu, ++nlog == 40 ? "; further changes not logged" : "");
 }
