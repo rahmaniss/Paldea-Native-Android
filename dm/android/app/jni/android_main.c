@@ -756,6 +756,62 @@ static void graphics_auto(void) {
     int short_ = fps > 1 && fps_avg < 30 * 0.93, full = fps >= 30 * 0.97;   // (no frames at all: a load or a pause, not a slow scene)
     slow = short_ ? slow + 1 : 0;
     cool = calm && (!g_fps_guard || full) ? cool + 1 : 0;
+    // Scarlet / Violet: one ladder of the game's own settings, lightest last (as Legends: Arceus's, arceus-renderer eee83d5): TV mode at 100 % then 85 % 3D render scale,
+    //   handheld mode at 100 %, 85 %, 70 % (the mode through hle_oe.c, the scale through loader.c paldea_scale). Down after two short checks, or one with the GPU over 85 %
+    //   of the frame's budget; with the CPU the limit (GPU under 70 %, game thread over 85 %) straight to handheld mode, never a smaller picture; hot: handheld mode at
+    //   least. Each step is judged 15 s after it applies (a scale applies at the game's next resolution update: dm_paldea_scale_applied) and undone if it gained under
+    //   1.5 fps (a step for heat: if it cost over 1 fps), and that reason steps nothing for 5 minutes. Up after a calm spell (a minute, twice as long after each fall
+    //   back, up to 16) or early when the GPU's time projected to the step above fits in 75 % of the budget. A scale set by hand (DM_RES_CAP: the slider, Lowest) is
+    //   kept: only the mode steps then. Battery saver: handheld mode at least
+    { extern void dm_paldea_scale_set(float) __attribute__((weak)); extern int dm_paldea_scale_ready(void) __attribute__((weak)), dm_paldea_scale_applied(void) __attribute__((weak));
+      if (&dm_paldea_scale_set && &dm_paldea_scale_ready && &dm_paldea_scale_applied && dm_paldea_scale_ready()) {
+        static const struct { int mode; float s; } L[] = { { 1, 1.0f }, { 1, 0.85f }, { 0, 1.0f }, { 0, 0.85f }, { 0, 0.70f } };
+        enum { NL = 5, HH = 2 };
+        static int lv, probe, probe_hot, nogain, noheat, since, wait_ = 12, held_, waited; static double fps_was;
+        const char *ce = getenv("DM_RES_CAP"); float cap = ce ? (float)atof(ce) : 0; int capset = cap >= 0.5f && cap <= 1.0f;
+        #define PAL_OK(i) (!capset || L[i].s == 1.0f)   /* (a scale set by hand: only the steps at 100 %) */
+        #define PAL_SET(i) do { lv = (i); dm_set_opmode(L[lv].mode); dm_paldea_scale_set(capset ? cap : L[lv].s); } while (0)   /* (the same mode again: no change, hle_oe.c) */
+        since++; if (nogain > 0) nogain--; if (noheat > 0) noheat--;
+        double budget = 1000.0 / (g_fps_guard > 0 ? g_fps_guard : 30), gpu = dm_gpu_avg_ms ? dm_gpu_avg_ms(60) : -1, cpu = &g_nvn_game_work_avg_ns ? atomic_load(&g_nvn_game_work_avg_ns) / 1e6 : -1;
+        int gpu_bound = gpu > 0 && gpu > 0.85 * budget, cpu_bound = gpu > 0 && gpu < 0.70 * budget && cpu > 0.85 * budget;
+        if (power_saver() && lv < HH) { int was = lv; PAL_SET(HH); probe = 0; cool = 0; held_ = 0; slow = 0; since = 0;
+            if (was != lv) fprintf(stderr, "power: battery saver: handheld mode\n"); return; }
+        if (probe) {   // the last step judged 15 s after it applied (a minute at most waiting for the game's next resolution update)
+            if (!dm_paldea_scale_applied() && ++waited < 12) return;
+            if (!--probe && fps_avg > 1 && fps_was > 1 && lv > 0) {
+                double gain_need = fps_was * 0.06 > 1.5 ? fps_was * 0.06 : 1.5;
+                if (probe_hot ? fps_avg < fps_was - 1.0 : fps_avg < fps_was + gain_need) {
+                    int to = lv - 1; while (to > 0 && !PAL_OK(to)) to--;
+                    PAL_SET(to); slow = 0; since = 0; if (probe_hot) noheat = 60; else nogain = 60;
+                    fprintf(stderr, "%s: the lighter step %s (%.1f → %.1f fps on average): back to %s at %d %%; %s for 5 minutes\n", probe_hot ? "graphics auto" : "fps guard",
+                            probe_hot ? "cost frames" : "did not help", fps_was, fps_avg, L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f),
+                            probe_hot ? "heat steps it no further" : "a short frame rate steps it no further");
+                    return; } }
+            if (probe) return; }
+        if (full) held_++;
+        if (held_ >= 24) wait_ = 12;   // two minutes held at this step: the next step up waits a minute again
+        int for_heat = hot && lv < HH && since >= 6 && !noheat,
+            for_rate = slow >= (gpu_bound ? 1 : 2) && !nogain && (!cpu_bound || lv < HH);
+        { static int said_cpu; if (short_ && cpu_bound && lv >= HH && !(said_cpu++ % 12))
+              fprintf(stderr, "fps guard: %.1f fps, short of %d, but the CPU is the limit (game thread %.1f ms, GPU %.1f ms of %.1f): the picture stays\n", fps, g_fps_guard, cpu, gpu, budget); }
+        int to = lv + 1; if ((for_heat || cpu_bound) && to < HH) to = HH; while (to < NL && !PAL_OK(to)) to++;
+        int up = lv - 1; while (up > 0 && !PAL_OK(up)) up--;
+        // up early: the GPU's time projected to the step above (pixels: the mode's height 1080 / 720, times the scale, squared) fits in 75 % of the budget
+        double px = (L[lv].mode ? 1080.0 : 720.0) * L[lv].s, pu = lv > 0 ? (L[up].mode ? 1080.0 : 720.0) * L[up].s : px, r_up = pu / px;
+        int up_early = lv > 0 && gpu > 0 && cool >= 2 && full && !hot && gpu * r_up * r_up < 0.75 * budget;
+        if ((for_heat || for_rate) && to < NL) {
+            if (!for_heat && held_ < 24 && wait_ < 192) wait_ *= 2;   // short again soon after a step up: wait twice as long next time
+            probe = 3; probe_hot = for_heat; waited = 0; fps_was = fps_avg > 1 ? fps_avg : fps;
+            PAL_SET(to); cool = 0; held_ = 0; slow = 0; since = 0;
+            fprintf(stderr, "%s: %s at %d %% (GPU %.1f ms, game thread %.1f ms of %.1f)\n", for_heat ? "graphics auto: the phone is hot" : cpu_bound ? "fps guard: short of 30 with the CPU the limit" : "fps guard: short of 30",
+                    L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f), gpu, cpu, budget);
+        } else if (lv > 0 && (cool >= wait_ || up_early) && !(power_saver() && up < HH)) {
+            PAL_SET(up); cool = 0; held_ = 0; slow = 0; since = 0;
+            fprintf(stderr, "graphics auto: %s: %s at %d %%\n", up_early ? "the GPU has room" : g_fps_guard ? "steady and cool" : "cooled down", L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f));
+        }
+        #undef PAL_OK
+        #undef PAL_SET
+        return; } }
     if (dm_res_scale_ready()) {   // the render scale (a cap set by hand, DM_RES_CAP or Lowest, is left alone)
         static int probe, probe_hot, nogain, noheat; static double fps_was;
         if (getenv("DM_RES_CAP")) return;

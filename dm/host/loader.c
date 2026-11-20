@@ -599,6 +599,8 @@ void dm_paldea_scale_set(float c) {
     LOG("Scarlet / Violet 3D render scale %.2f asked for: applies at the game's next resolution update", (double)c);
 }
 int dm_paldea_scale_ready(void) { return g_pal_ask != NULL; }
+// 1 when the scale asked for is the one in use (the game has computed its render size since it was asked: the word after it, copied by 0xdfa800's width stub)
+int dm_paldea_scale_applied(void) { return g_pal_ask && __atomic_load_n(g_pal_ask, __ATOMIC_ACQUIRE) == __atomic_load_n(g_pal_ask + 1, __ATOMIC_ACQUIRE); }
 static int paldea_scale(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
     const char *d = getenv("DM_PALDEA_SCALE"); if (d && !strcmp(d, "0")) return 0;
