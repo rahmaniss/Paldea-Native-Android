@@ -406,3 +406,4 @@ Normal: the game's own shadows	標準：ゲーム本来の影
 Low: shadows drawn at half the detail, a little lighter	低：影の精細さを半分にして少し軽く
 Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)	オフ：太陽の影なし、最も軽い（テスト：見た目をGitHubで教えてください）
 Normal	標準
+Widescreen: the game drawn at your screen's shape, nothing stretched (experimental: uses more GPU memory; tell us on GitHub if things pop in at the edges)	ワイド：画面の形のままゲームを描画、引き伸ばしなし（実験的：GPUメモリを多く使います。端で物が急に現れたらGitHubで教えてください）

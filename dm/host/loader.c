@@ -608,6 +608,33 @@ static int paldea_scale(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     LOG("%s: 3D render scale for Scarlet / Violet 4.0.0: %.2f on the game's own (both size computations of 3DBufferWidthScale / HeightScale; set at start)", m->name, (double)c);
     return 5;
 }
+// Widescreen for Pokémon Scarlet / Violet 4.0.0 (DM_ASPECT=wide, the screen's ratio in DM_WIDE_RATIO; DM_WIDE_RENDER=0 leaves it out): the game renders at the
+//   screen's shape. The resolution function main+0xdfa800 picks its size pair from the config object (width x21+0x430, height +0x438, +4 for performance mode 1:
+//   ldr w22 / ldr w23 @+0xdfa860 / +0xdfa864) and publishes it as ResolutionWidth2D / Height2D (the UI layer's size, @+0xdfa8a4 / +0xdfa8f8), as the UI size at
+//   *(main+0x475a0a0)+0x100 and, times 3DBufferWidth/HeightScale, as the 3D render size (its tail; paldea_scale). The height load becomes BL to a stub in the gap
+//   after the code (+0x343fd00, after paldea_scale's) that loads the height and sets the width = height x the ratio (16.16 fixed point, rounded to even, at most
+//   2.4). x16 and x30 are free there (the function calls on right after). Render targets grow with the width (about 25 % at 20:9). Every word is checked first
+static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
+    if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
+    const char *a = getenv("DM_ASPECT"), *r = getenv("DM_WIDE_RATIO"), *e = getenv("DM_WIDE_RENDER");
+    if (!a || strcmp(a, "wide") || (e && atoi(e) <= 0)) return 0;
+    double ratio = r ? atof(r) : 0; if (ratio < 16.0 / 9.0 + 0.01) return 0;
+    if (ratio > 2.4) ratio = 2.4;
+    const uint64_t site = 0xdfa864, cave = 0x343fd00, lit = cave + 0x20; const uint32_t orig = 0xb9443b17u, call = 0x94991527u;
+    static const uint32_t code[7] = { 0xb9443b17u,   // ldr w23, [x24, #0x438]       (the height, as the game loads it)
+        0x180000f0u, 0x1b107ef6u,                    // ldr w16, ratio / mul w22, w23, w16
+        0x114042d6u, 0x53117ed6u, 0x531f7ad6u,       // add w22, w22, #0x10000 / lsr w22, w22, #17 / lsl w22, w22, #1   (to the nearest even width)
+        0xd65f03c0u };                               // ret
+    uint32_t w; memcpy(&w, m->base + site, 4);
+    int ok = w == orig && site + 4 <= m->text_end && !overlaps_rewrite(m, site, 4, p0, p1) && m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim;
+    for (unsigned i = 0; ok && i < 9; i++) { memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
+    if (!ok) { LOG("[RED] %s: widescreen not applied: the resolution function's height load or the gap after the code differ, or were rewritten", m->name); return 0; }
+    uint32_t fx = (uint32_t)(ratio * 65536.0 + 0.5);
+    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4);
+    LOG("%s: widescreen for Scarlet / Violet 4.0.0: the game renders at the screen's shape (%.4f: 1080 tall -> %u wide, 720 -> %u)", m->name, ratio,
+        (uint32_t)((1080u * fx + 0x10000u) >> 17) << 1, (uint32_t)((720u * fx + 0x10000u) >> 17) << 1);
+    return 2;
+}
 static int builtin_patches(module_t *m, uint64_t lim, int64_t p0, int64_t p1, int modded) {
     (void)modded;
     if (strcmp(m->name, "main")) return 0;
@@ -615,6 +642,7 @@ static int builtin_patches(module_t *m, uint64_t lim, int64_t p0, int64_t p1, in
     n += wide_patch(m, lim, p0, p1);
     n += wide_render_patch(m, p0, p1);
     n += paldea_scale(m, lim, p0, p1);
+    n += paldea_wide(m, lim, p0, p1);
     return n + (g_bmod_fps ? 0 : fps_patch(m, lim, p0, p1));
 }
 // Built-in: DM_FPS_TARGET=60..120 (opt-in, the in-game menu; experimental) for Pokémon Shield and Sword 1.3.2's main: the present interval the game asks NVN for, 2 (30 fps),

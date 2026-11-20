@@ -406,3 +406,4 @@ Normal: the game's own shadows	Normal : les ombres du jeu
 Low: shadows drawn at half the detail, a little lighter	Basses : ombres à moitié moins détaillées, un peu plus légères
 Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)	Désactivées : pas d’ombres du soleil, le plus léger (un test : dites-nous sur GitHub ce que ça donne)
 Normal	Normal
+Widescreen: the game drawn at your screen's shape, nothing stretched (experimental: uses more GPU memory; tell us on GitHub if things pop in at the edges)	Écran large : le jeu dessiné à la forme de votre écran, sans étirement (expérimental : utilise plus de mémoire GPU ; dites-nous sur GitHub si des objets apparaissent soudain sur les bords)
