@@ -4903,6 +4903,7 @@ void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNc
 
 // ================= Present: no window yet (the Android surface comes with the app); paced to the game's period, screenshots on request =================
 static _Atomic uint64_t g_present_n; static uint64_t g_last_present;
+uint64_t nvn_present_count(void) { return atomic_load(&g_present_n); }   // (android_main.c: a stall is no frame for a second)
 static uint32_t crc_tab[256];
 static uint32_t crc32_(uint32_t c, const uint8_t *p, size_t n) { if (!crc_tab[1]) for (uint32_t i = 0; i < 256; i++) { uint32_t r = i; for (int k = 0; k < 8; k++) r = r & 1 ? 0xedb88320u ^ (r >> 1) : r >> 1; crc_tab[i] = r; }
     c = ~c; while (n--) c = crc_tab[(c ^ *p++) & 0xff] ^ (c >> 8); return ~c; }
