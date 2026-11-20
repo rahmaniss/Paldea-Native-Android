@@ -645,12 +645,15 @@ static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
         0x180000f0u, 0x1b107ef6u,                    // ldr w16, ratio / mul w22, w23, w16
         0x114042d6u, 0x53117ed6u, 0x531f7ad6u,       // add w22, w22, #0x10000 / lsr w22, w22, #17 / lsl w22, w22, #1   (to the nearest even width)
         0xd65f03c0u };                               // ret
-    uint32_t w; memcpy(&w, m->base + site, 4);
-    int ok = w == orig && site + 4 <= m->text_end && !overlaps_rewrite(m, site, 4, p0, p1) && m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim;
+    // +0xdfa920 reloads the width from the config (ldr w23, [x25]) for the 3D ResolutionWidth it publishes later: mov w23, w22 (the widened width, still in w22) keeps
+    //   the 3D size the same shape as the UI size (found by the other session, checked in both mains)
+    const uint64_t site2 = 0xdfa920; const uint32_t orig2 = 0xb9400337u, mov2 = 0x2a1603f7u;
+    uint32_t w, w2; memcpy(&w, m->base + site, 4); memcpy(&w2, m->base + site2, 4);
+    int ok = w == orig && w2 == orig2 && site2 + 4 <= m->text_end && !overlaps_rewrite(m, site2, 4, p0, p1) && site + 4 <= m->text_end && !overlaps_rewrite(m, site, 4, p0, p1) && m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim;
     for (unsigned i = 0; ok && i < 9; i++) { memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
     if (!ok) { LOG("[RED] %s: widescreen not applied: the resolution function's height load or the gap after the code differ, or were rewritten", m->name); return 0; }
     uint32_t fx = (uint32_t)(ratio * 65536.0 + 0.5);
-    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4);
+    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4); memcpy(m->base + site2, &mov2, 4);
     LOG("%s: widescreen for Scarlet / Violet 4.0.0: the game renders at the screen's shape (%.4f: 1080 tall -> %u wide, 720 -> %u)", m->name, ratio,
         (uint32_t)((1080u * fx + 0x10000u) >> 17) << 1, (uint32_t)((720u * fx + 0x10000u) >> 17) << 1);
     return 2;
