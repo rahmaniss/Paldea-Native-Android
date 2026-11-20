@@ -801,6 +801,7 @@ static void graphics_auto(void) {
                 double gain_need = fps_was * 0.06 > 1.5 ? fps_was * 0.06 : 1.5;
                 if (probe_hot ? fps_avg < fps_was - 1.0 : fps_avg < fps_was + gain_need) {
                     int to = lv - 1; while (to > 0 && !PAL_OK(to)) to--;
+                    if (L[lv].mode == 0 && L[to].mode == 1) to = lv;   // (never back to TV mode while playing: the crash after that switch, see below; the step is kept)
                     PAL_SET(to); slow = 0; since = 0; if (probe_hot) noheat = 60; else nogain = 60;
                     fprintf(stderr, "%s: the lighter step %s (%.1f → %.1f fps on average): back to %s at %d %%; %s for 5 minutes\n", probe_hot ? "graphics auto" : "fps guard",
                             probe_hot ? "cost frames" : "did not help", fps_was, fps_avg, L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f),
@@ -829,7 +830,9 @@ static void graphics_auto(void) {
             PAL_SET(to); cool = 0; held_ = 0; slow = 0; since = 0;
             fprintf(stderr, "%s: %s at %d %% (GPU %.1f ms, game thread %.1f ms of %.1f)\n", for_heat ? "graphics auto: the phone is hot" : cpu_bound ? "fps guard: short of 30 with the CPU the limit" : "fps guard: short of 30",
                     L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f), gpu, cpu, budget);
-        } else if (lv > 0 && (cool >= wait_ || up_early) && !(power_saver() && up < HH)) {
+        } else if (lv > 0 && (cool >= wait_ || up_early) && !(power_saver() && up < HH) && !(lv >= HH && L[up].mode == 1)) {
+            // (handheld back to TV mode is left out: a player's Scarlet 4.0.0 crashed 5 s after that switch, null read at main+0xc281d0 in Thread-5, SM8650 Turnip,
+            //   2026-11-20; handheld to TV was fine. Once in handheld mode the ladder stays there for the run, the scale steps only)
             PAL_SET(up); cool = 0; held_ = 0; slow = 0; since = 0;
             fprintf(stderr, "graphics auto: %s: %s at %d %%\n", up_early ? "the GPU has room" : g_fps_guard ? "steady and cool" : "cooled down", L[lv].mode ? "TV mode" : "handheld mode", (int)((capset ? cap : L[lv].s) * 100 + 0.5f));
         }
@@ -896,9 +899,9 @@ static void graphics_auto(void) {
             if (!hot && held < 24 && wait < 192) wait *= 2;   // fell back soon after trying TV mode again: wait twice as long next time
             mode = 0; dm_set_opmode(0); cool = 0; held = 0;
             if (hot) fprintf(stderr, "graphics auto: the phone is hot: handheld mode (720p)\n");
-            else fprintf(stderr, "fps guard: %.1f fps, short of %d: handheld mode (720p); TV mode again after %d s steady\n", fps, g_fps_guard, wait * 5);
+            else fprintf(stderr, "fps guard: %.1f fps, short of %d: handheld mode (720p) for the rest of this run (wait %d s)\n", fps, g_fps_guard, wait * 5);
         }
-    } else if (cool >= wait) {
+    } else if (cool >= wait && 0) {   // (Scarlet / Violet: never back to TV mode while playing: the game crashed 5 s after that switch, main+0xc281d0, 2026-11-20)
         mode = 1; dm_set_opmode(1); slow = 0; held = 0;
         fprintf(stderr, "graphics auto: %s: TV mode (1080p)\n", g_fps_guard ? "steady and cool" : "cooled down");
     }
