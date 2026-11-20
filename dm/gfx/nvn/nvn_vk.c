@@ -176,6 +176,7 @@ static void tfp_decide(void); static int g_tf_pts = -1, g_vstores = 1; static Vk
 enum { TFP_W = 256, TFP_H = 256 };   // the point targets: up to 65,536 vertices a capture
 static int g_tfst_a = -1, g_tfst_b = -1, g_tfst_c = -1;   // the transform feedback self-test's counts (tf_selftest.h), -1 not run
 static void vtx_canary(void);   // vtx_canary.h: per-draw vertex sizes checked on this driver at start
+static void drv_check(void), drv_check_timeline(void);   // drv_check.h: the driver checks at start
 static int g_arm_rel, g_arm_p;   // Arm's own Mali driver: its release, r<rel>p<p> (driverVersion is VK_MAKE_VERSION(rel, p, 0): 0xb001000 = r44p1); 0 for any other driver
 static int g_arm_beta;           // ... a beta build of it (driverInfo "v1.r49p1-03bet0": the G925's)
 static int g_clampzero; static _Atomic int g_clampzero_n;   // shaders get spv_clamp_zero (Arm erratum 3779215: mtl_init decides); how many it changed
@@ -692,9 +693,11 @@ void mtl_init(void) {
          g_props.deviceName, VK_API_VERSION_MAJOR(g_props.apiVersion), VK_API_VERSION_MINOR(g_props.apiVersion), VK_API_VERSION_PATCH(g_props.apiVersion), g_props.driverVersion,
          g_host_import ? "imported host memory" : "driver memory moved onto the pool (mremap)", g_clipctl, g_border, g_divisor, g_eds2,
          nvn_fmt_vk_transcode(0x46) ? "transcoded to ETC2 on upload" : nvn_fmt_vk_decode(0x46) ? "decoded on upload" : "sampled by the GPU");
+    drv_check_timeline();   // (whether this driver's timeline semaphores work; if not, a fence per submission: drv_check.h. Before the completion thread makes its own)
     completion_start();
     dummies_init();
     vtx_canary();    // (whether this driver reads vertex sizes given per draw right; if not, they go into each pipeline: vtx_canary.h)
+    drv_check();     // (the driver checks: push constants, dual-source blending, min / max of NaN; a wrong one takes its safe route: drv_check.h)
     tf_selftest();   // (Arm's driver: whether transform feedback captures write; tf_selftest.h)
     tfp_decide();    // (and whether they go as points: tf_points.h)
     pcache_open();
@@ -3360,6 +3363,7 @@ static void td_note(vtex *x, uint64_t ser, uint32_t lv, uint32_t sl) {
 #include "tf_selftest.h"
 #include "tf_points.h"
 #include "vtx_canary.h"
+#include "drv_check.h"
 static int tf_batch_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_VK_TF_BATCH"); v = !(e && !strcmp(e, "0")); } return v; }
 static int tf_hits(uint64_t lo, uint64_t hi) { for (int i = 0; i < g_ntfw; i++) if (lo < g_tfw[i].hi && g_tfw[i].lo < hi) return 1; return 0; }
 static void tf_pass_begin(int keep) {
