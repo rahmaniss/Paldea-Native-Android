@@ -48,7 +48,18 @@ public final class GameMenu {
     private GameMenu() { }
     private static native boolean nativeSetting(String key, String value);
     private static native void nativeEditTouch();
-    private static native String nativeLsfgImport(byte[] dll, String dir);   // lsfg_import.cpp: null when done, else why not
+    private static native String nativeLsfgImport(byte[] dll, String dir);
+    private static native String nativeFramegenNote();   // android_main.c: "" making pictures (or off), "paused:<fps>", "slow:<ms>", "cost:<fps>", "off"
+    // why frame generation makes no pictures right now, for the player; null when it does (or the engine is not running)
+    private static String framegenNote(Activity a) {
+        String n; try { n = nativeFramegenNote(); } catch (UnsatisfiedLinkError e) { return null; }
+        if (n == null || n.isEmpty()) return null;
+        if (n.equals("need60")) return t(a, "Off at 30 fps: frame generation needs the game at a locked 60 fps (Performance → Frame rate: 60).");
+        if (n.startsWith("paused:")) return t(a, "Paused: the game runs at %s fps here, and frame generation needs a locked 60. It comes back on by itself once the game holds 60.", n.substring(7));
+        if (n.startsWith("cost:")) return t(a, "Off: even at its lightest it cost the game its own frames here (down to %s fps). Switch it off and on to try again.", n.substring(5));
+        if (n.startsWith("slow:")) return t(a, "Off: this GPU needs %s ms for each picture, more than the game can spare. Switch it off and on to try again.", n.substring(5));
+        return t(a, "Off until the next start (see the log for why).");
+    }   // lsfg_import.cpp: null when done, else why not
 
     // ---------- look ----------
     private static final int BG = 0xF0121419, CARD = 0xFF1C1F26, CARD_LINE = 0xFF2A2E37, TEXT = 0xFFF2F3F5, SUB = 0xFF9AA0AB, CHIP = 0xFF262A33, WARN = 0xFFFFB74D;
@@ -186,8 +197,13 @@ public final class GameMenu {
         c.setOnClickListener(v -> r.run());
     }
     private static void slider(Activity a, String title, String key, int min, int max, int def, java.util.function.IntFunction<String> fmt) {
+        slider(a, title, key, min, max, def, fmt, String::valueOf, s -> { try { return Integer.parseInt(s); } catch (NumberFormatException e) { return def; } });
+    }
+    // a slider whose positions map to the stored values (store) and back (load): the 3D render scale keeps its fractions ("0.80") and Auto ("")
+    private static void slider(Activity a, String title, String key, int min, int max, int def, java.util.function.IntFunction<String> fmt,
+                               java.util.function.IntFunction<String> store, java.util.function.ToIntFunction<String> load) {
         LinearLayout c = card(a); LinearLayout row = titleRow(a, c, title, null);
-        int v; try { v = Integer.parseInt(GameSettings.get(a, key)); } catch (NumberFormatException e) { v = def; }
+        int v = load.applyAsInt(GameSettings.get(a, key));
         v = Math.max(min, Math.min(max, v));
         TextView val = text(a, fmt.apply(v), 14, 0xFFF2F2F5, true); row.addView(val);
         SeekBar sb = new SeekBar(a); sb.setMax(max - min); sb.setProgress(v - min); sb.setPadding(dp(a, 10), dp(a, 14), dp(a, 10), dp(a, 4));
@@ -203,7 +219,7 @@ public final class GameMenu {
         knob.setColor(0xFFFFFFFF); knob.setStroke(dp(a, 3), 0x40FFFFFF); knob.setSize(dp(a, 20), dp(a, 20));
         sb.setThumb(knob); sb.setThumbOffset(dp(a, 10)); sb.setSplitTrack(false); sb.setBackground(null);
         sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar b, int p, boolean user) { val.setText(fmt.apply(p + min)); if (user) set(a, key, String.valueOf(p + min)); }
+            public void onProgressChanged(SeekBar b, int p, boolean user) { val.setText(fmt.apply(p + min)); if (user) set(a, key, store.apply(p + min)); }
             public void onStartTrackingTouch(SeekBar b) { }
             public void onStopTrackingTouch(SeekBar b) { }
         });
@@ -241,6 +257,13 @@ public final class GameMenu {
             try { nativeSetting(key, value); } catch (UnsatisfiedLinkError e) { }   // (the touch buttons' click follows Rumble unless set apart: touch_ui.c)
         }
         else { try { now = nativeSetting(key, value); } catch (UnsatisfiedLinkError e) { now = false; } }
+        // Widescreen (loader.c wide_patch): the camera is widened as the game loads, to this screen's own aspect (its long side over its short), so from the next
+        //   start; to or from it, the picture's box changes at once but the camera only then
+        if (key.equals("DM_ASPECT")) {
+            if (value.equals("wide")) { android.util.DisplayMetrics dm = new android.util.DisplayMetrics(); a.getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+                int l = Math.max(dm.widthPixels, dm.heightPixels), s = Math.min(dm.widthPixels, dm.heightPixels);
+                if (s > 0) GameSettings.set(a, "DM_WIDE_RATIO", String.format(java.util.Locale.ROOT, "%.4f", (double) l / s)); }
+            if (value.equals("wide") || was.equals("wide")) now = false; }
         if (!now) RESTART.add(key);
     }
 
@@ -248,21 +271,27 @@ public final class GameMenu {
     private static void display(Activity a) {
         heading(a, t(a, "Screen"));
         choice(a, "DM_ASPECT", t(a, "Picture"), new String[][] { { "", "16:9", t(a, "16:9, as the game is made") }, { "fill", t(a, "Fill"), t(a, "Fill the screen (stretched)") },
-                                                                    { "20:9", "20:9", t(a, "20:9, for a widescreen mod") } });
+                                                                    { "20:9", "20:9", t(a, "20:9, for a widescreen mod") },
+            { "wide", t(a, "Widescreen"), t(a, "Widescreen: the game's camera made as wide as your screen, nothing stretched (Sword / Shield 1.3.2; the HUD is stretched)") } });
         String rec = GameSettings.profile(a)[6].equals("sgsr") ? "SGSR" : t(a, "Sharp");
         choice(a, "DM_SCALER", t(a, "Upscaling"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s", rec) },
             { "sharp", t(a, "Sharp"), t(a, "Sharp: the picture upscaled with sharpening (lighter settings keep their detail)") },
-            { "sgsr", "SGSR", t(a, "Snapdragon Game Super Resolution (Qualcomm's upscaler)") }, { "smooth", t(a, "Smooth"), t(a, "Smooth: a plain stretch") } });
+            { "sgsr", "SGSR", t(a, "Snapdragon Game Super Resolution (Qualcomm's upscaler)") },
+            { "fsr", "FSR", t(a, "AMD FidelityFX Super Resolution 1: edge-aware upscaling, then sharpening (Sharpness sets how much)") }, { "smooth", t(a, "Smooth"), t(a, "Smooth: a plain stretch") } });
+        // the picture's colour, graded in the upscaler's last shader (nvn_vk.c color_mode): live
+        choice(a, "DM_COLOR", t(a, "Colour"), new String[][] { { "", t(a, "Natural"), t(a, "Natural: the colours as the game draws them") },
+            { "vibrant", t(a, "Vibrant"), t(a, "Vibrant: muted colours lifted, a touch more contrast (less grey haze)") }, { "cinematic", t(a, "Cinematic"), t(a, "Cinematic: stronger contrast, a slightly warm tone") } });
         // Frame generation (nvn_vk.c, nvn_fgen.h): off unless the player turns it on, on any GPU; takes effect at once
         //   Lossless Scaling's (nvn_lsfg.h): offered once the player has imported their own Lossless.dll (its shaders, converted, in files/lsfg)
         String[][] fgc = { { "", t(a, "Off"), "" },
-            { "on", t(a, "On"), t(a, "On: a picture is made between each two of the game's frames, so 30 fps moves like 60. Needs a fast GPU; your input shows about 17 ms later") },
+            { "on", t(a, "On"), t(a, "On: a picture is made between each two of the game's frames, so 60 fps moves like 120. Only while the game holds a locked 60 fps; your input shows about 8 ms later") },
             { "lsfg", "Lossless Scaling", t(a, "Lossless Scaling: the in-between picture made by your own copy of Lossless Scaling's frame generation (sharper motion, needs a faster GPU)") } };
         if (!GameSettings.experimentsUnlocked(a)) { lockedNote(a, t(a, "Frame generation (experimental)")); } else {   // (locked off for now: android_main.c)
         choice(a, "DM_FRAMEGEN", t(a, "Frame generation (experimental)"), GameSettings.hasLsfg(a) ? fgc : java.util.Arrays.copyOf(fgc, 2));
+        { String fn = framegenNote(a); if (fn != null) note(a, fn); }   // (paused under 25 fps, or cut off for the GPU's time: said here, not only in the log)
         if (GameSettings.hasLsfg(a))   // Lossless Scaling's pictures a game frame (nvn_vk.c lsfg_mult); Auto: as many as the display's rate divides evenly
             choice(a, "DM_LSFG_MULT", t(a, "Lossless Scaling pictures"), new String[][] {
-                { "", t(a, "Auto"), t(a, "Auto: 4x on a 120 Hz screen, 3x on 90 Hz, else 2x (at 30 fps)") },
+                { "", t(a, "Auto"), t(a, "Auto: 2x, light (the game at a locked 60 shown at 120)") },
                 { "2", "2x", t(a, "2x: one picture between each two of the game's frames (30 fps moves like 60)") },
                 { "3", "3x", t(a, "3x: two pictures between each two frames (like 90 fps; even on a 90 Hz screen only)") },
                 { "4", "4x", t(a, "4x: three pictures between each two frames (like 120 fps; needs a 120 Hz screen and a fast GPU)") } });
@@ -292,6 +321,17 @@ public final class GameMenu {
             // Lowest: handheld mode with the game's 3D render scale capped (Pokémon Sword / Shield: the engine's hle_resscale.c; Scarlet / Violet have no such scale)
             { "lowest", t(a, "Lowest"), t(a, GameSettings.paldea(a) ? "Lowest: handheld mode, 3D at 960x540, coolest" : "Lowest: 3D at 960x540, coolest") } };
         choice(a, "DM_GRAPHICS", t(a, "Graphics"), GameSettings.paldea(a) ? java.util.Arrays.copyOf(gfx, 4) : gfx);
+        // the game's own 3D render scale, capped (android_main.c DM_RES_CAP, hle_resscale.c): Sword / Shield, at once. The HUD and text stay sharp; only the 3D is drawn smaller
+        // Battery saver (android_main.c power_saver, #333): live
+        choice(a, "DM_POWER", t(a, "Power"), new String[][] { { "", t(a, "Balanced"), t(a, "Balanced: the best picture this phone holds at a steady frame rate") },
+            { "saver", t(a, "Battery saver"), t(a, "Battery saver: a cooler phone and a longer battery: 30 fps on Auto, a lighter picture, and it eases off sooner when the phone warms up") } });
+        // a slider (the user, 2026-11-19): positions 9..20 = Auto, then 50 % to 100 % in steps of 5; stored as before ("" Auto, "0.85"), so env.txt and the engine are unchanged
+        if (!GameSettings.paldea(a)) {
+            slider(a, t(a, "3D render scale"), "DM_RES_CAP", 9, 20, 9, v -> v == 9 ? t(a, "Auto") : (v * 5) + " %",
+                   v -> v == 9 ? "" : String.format(java.util.Locale.ROOT, "%.2f", v * 5 / 100.0),
+                   st -> { try { double d = Double.parseDouble(st); return Math.max(10, Math.min(20, (int) Math.round(d * 20))); } catch (RuntimeException e) { return 9; } });
+            note(a, t(a, "Left: Auto, what the Graphics setting gives, lowered by itself when the phone is hot. Lower: cooler and faster, the 3D softer; text and menus stay sharp."));
+        }
         if (GameSettings.has60(a)) choice(a, "DM_FPS_TARGET", t(a, "Frame rate"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s fps", p[5]) },
             { "30", "30 fps", t(a, "30 fps, as the game is made") }, { "60", "60 fps", GameSettings.paldea(a) ? t(a, "Up to 60 fps: faster where the phone can, game speed stays right (Fl4sh's Dynamic FPS mod)")
                                                                                                : t(a, "60 fps: smoother; drops to 720p when needed to hold 60 (with Graphics on Auto or Adaptive)") } });
@@ -314,6 +354,9 @@ public final class GameMenu {
         choice(a, "DM_RSTICK_SENS", t(a, "Camera sensitivity"), new String[][] { { "50", "50 %", t(a, "Slower camera: the right stick and the touch camera turn less") }, { "75", "75 %", "" },
             { "", "100 %", t(a, "As on the Switch") }, { "125", "125 %", "" }, { "150", "150 %", t(a, "Faster camera: full speed with less of the stick") }, { "200", "200 %", "" } });
         heading(a, t(a, "Touch controls"));
+        // the sticks (touch_ui.c float_on): fixed where the layout puts them, or floating (the left one comes to the thumb; the right half drags the camera)
+        choice(a, "DM_TOUCH_STICKS", t(a, "Sticks"), new String[][] { { "", t(a, "Fixed"), t(a, "Fixed: the sticks stay where they are drawn, as on Joy-Cons") },
+            { "floating", t(a, "Floating"), t(a, "Floating: touch anywhere on the left half to move (the stick comes to your thumb); drag on the right half to turn the camera") } });
         // L3 / R3 (pressing the sticks, touch_ui.c): off by default, Sword and Shield hardly use them (the left stick whistles in the Wild Area)
         choice(a, "DM_TOUCH_L3R3", t(a, "L3 / R3 buttons"), new String[][] { { "", t(a, "Off"), t(a, "Off: no L3 / R3 on screen (a controller's stick buttons still work)") },
                                                                              { "on", t(a, "On"), t(a, "On: L3 and R3 above the sticks (move them with Move the touch controls)") } });
@@ -322,7 +365,7 @@ public final class GameMenu {
                                                                                 { "on", t(a, "On"), "" }, { "off", t(a, "Off"), "" } });
         slider(a, t(a, "Opacity"), "DM_TOUCH_OPACITY", 20, 100, 100, v -> v + " %");
         slider(a, t(a, "Fade after"), "DM_TOUCH_FADE", 0, 10, 3, v -> v == 0 ? t(a, "never fade") : t(a, "%d s without a touch", v));
-        action(a, t(a, "Move the touch controls"), t(a, "Drag a control to move it, pinch to resize, double-tap to hide. Hold − for 2 s to save (hold + to reset)."), () -> {
+        action(a, t(a, "Move the touch controls"), t(a, "Drag a control to move it. To resize one, touch it, then pinch with two fingers anywhere. Double-tap to hide. Hold − for 2 s to save (hold + to reset)."), () -> {
             if (dlg != null) dlg.dismiss(); try { nativeEditTouch(); } catch (UnsatisfiedLinkError e) { } });
     }
     // Remapping (PadMapping.java, DM_PAD_MAPPING): tap a Switch button, then press the controller key for it (the panel takes the key: remapKey)
@@ -439,10 +482,11 @@ public final class GameMenu {
         button(a, r, t(a, "Save"), true, () -> { try (FileWriter fw = new FileWriter(new File(m, "notes.txt"))) { fw.write(e.getText().toString()); } catch (IOException x) { } go("order"); });
         button(a, r, t(a, "Cancel"), false, () -> go("order"));
     }
-    private static void confirm(Activity a, String q, Runnable yes) {   // asked in a card at the top of the page, not a pop-up
+    private static void confirm(Activity a, String q, Runnable yes) { confirm(a, q, t(a, "Delete"), yes); }
+    private static void confirm(Activity a, String q, String yesLabel, Runnable yes) {   // asked in a card at the top of the page, not a pop-up
         LinearLayout c = new LinearLayout(a); c.setOrientation(LinearLayout.VERTICAL); c.setBackground(round(CARD, dp(a, 16), dp(a, 2), WARN)); c.setPadding(dp(a, 16), dp(a, 12), dp(a, 16), dp(a, 12));
         c.addView(text(a, q, 15, TEXT, true)); LinearLayout r = new LinearLayout(a); c.addView(r);
-        button(a, r, t(a, "Delete"), true, yes); button(a, r, t(a, "Cancel"), false, () -> go(page));
+        button(a, r, yesLabel, true, yes); button(a, r, t(a, "Cancel"), false, () -> go(page));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.bottomMargin = dp(a, 10); body.addView(c, 0, lp); scroll.scrollTo(0, 0);
     }
 
@@ -529,17 +573,25 @@ public final class GameMenu {
         heading(a, t(a, "Background"));
         choice(a, "DM_BACKGROUND", t(a, "Leaving the game"), new String[][] { { "", t(a, "Keep playing"), t(a, "Keep playing: the game and its sound go on in the background") },
             { "off", t(a, "Pause"), t(a, "Pause: the game stops while it is not on screen") } });
+        // Quit (#317): the app otherwise stays in memory. Saves are committed atomically (hle_fs.c), so stopping at any moment keeps the last save the game made,
+        //   as turning the console off does; what was not saved in the game is lost, which the card says
+        action(a, t(a, "Quit the game"), t(a, "Closes the game completely"), () -> confirm(a, t(a, "Quit the game? Progress you have not saved in the game is lost, as on the console."),
+            t(a, "Quit"), () -> { a.finishAndRemoveTask(); android.os.Process.killProcess(android.os.Process.myPid()); }));
         // the replay on its own thread (hle_nvn.c DM_NVN_ASYNC): the game's thread hands each frame's graphics work over instead of translating it itself (about a quarter
         //   of a frame on a slow CPU, #99). Off by default until players have run it on many phones
         heading(a, t(a, "Performance"));
-        if (!GameSettings.experimentsUnlocked(a)) lockedNote(a, t(a, "Faster rendering (experimental)")); else
-        choice(a, "DM_NVN_ASYNC", t(a, "Faster rendering (experimental)"), new String[][] { { "", t(a, "Off"), "" },
-            { "1", t(a, "On"), t(a, "On: the graphics work runs on its own thread, next to the game's. Not tested on every phone yet: if the game misbehaves, turn it off and tell us on GitHub") } });
+        choice(a, "DM_NVN_ASYNC", t(a, "Faster rendering"), new String[][] { { "", t(a, "Auto"), t(a, "Auto: on for Adreno GPUs, off for others") },
+            { "1", t(a, "On"), t(a, "On: the graphics work runs on its own thread, next to the game's. Not tested on every phone yet: if the game misbehaves, turn it off and tell us on GitHub") },
+            { "0", t(a, "Off"), t(a, "Off: the graphics work runs on the game's own thread") } });
         // a frame capture for a bug report (nvn_vk.c, Frame capture): the engine reads capture.req (frames to wait, so the menu can be closed first) and writes the ZIP
         heading(a, t(a, "Bug reports"));
         action(a, t(a, "Capture a frame"), t(a, "Close this menu within 3 seconds and stay where the problem shows: the next frame is saved, step by step, as pictures and notes in Download (a ZIP ending in frame-capture.zip). Attach it to your issue."),
                () -> { try (java.io.FileWriter w = new java.io.FileWriter(new File(GameSettings.dir(a), "capture.req"))) { w.write("90"); } catch (IOException e) { }
                        android.widget.Toast.makeText(a, t(a, "Capturing in 3 seconds: close the menu."), android.widget.Toast.LENGTH_LONG).show(); });
+        // a frame graph for a performance report (nvn/fg_rec.h, the renderer's frame recorder): framegraph.req holds "<frames> <frames to wait>"; the text goes to Download
+        action(a, t(a, "Record the frame's passes"), t(a, "For slow scenes: close this menu within 3 seconds and stay where the game is slow. Three frames' render passes, with their GPU time where the phone gives it, are saved in Download (a file ending in framegraph.txt). Attach it to your issue."),
+               () -> { try (java.io.FileWriter w = new java.io.FileWriter(new File(GameSettings.dir(a), "framegraph.req"))) { w.write("3 90"); } catch (IOException e) { }
+                       android.widget.Toast.makeText(a, t(a, "Recording in 3 seconds: close the menu."), android.widget.Toast.LENGTH_LONG).show(); });
         // Mali's white scenes (#47 #53 #64 #68 #69 #72 #75): switches the engine has for narrowing it down, which players could only set by editing env.txt; each one a
         //   tester tries (with a capture) rules a cause in or out. Shown on Mali phones only
         if (DriverPackages.gpu(a).contains("mali")) {
@@ -558,9 +610,18 @@ public final class GameMenu {
             choice(a, "DM_VK_PROBE", t(a, "White-screen probe"), new String[][] { { "", t(a, "Off"), "" },
                 { "samples", t(a, "Textures"), t(a, "Textures: every texture read is limited to a sane range. If the white goes away, tell us: a texture is read wrong") },
                 { "inputs", t(a, "Inputs"), t(a, "Inputs: every value the vertex shader hands over is limited. If the white goes away, tell us") },
-                { "div", t(a, "Divisions"), t(a, "Divisions: every division is limited. If the white goes away, tell us") } });
+                { "div", t(a, "Divisions"), t(a, "Divisions: every division is limited. If the white goes away, tell us") },
+                { "output", t(a, "Output"), t(a, "Output: what each shader writes is limited. If the white goes away, tell us") },
+                { "mul", t(a, "Multiplies"), t(a, "Multiplies: every multiply result is limited. If the white goes away, tell us") },
+                { "add", t(a, "Additions"), t(a, "Additions: every add / subtract result is limited. If the white goes away, tell us") },
+                { "fma", t(a, "Multiply-adds"), t(a, "Multiply-adds: every fused multiply-add result is limited. If the white goes away, tell us") },
+                { "nanfix", t(a, "NaN fix"), t(a, "NaN fix: broken values the shaders write become 0 instead of turning the picture white. Tell us how it looks") },
+                { "nanfix,nantex", t(a, "NaN fix + textures"), t(a, "NaN fix + textures: the same, and broken values read from textures become 0 too. Tell us how it looks") },
+                { "f16target", t(a, "Float target"), t(a, "Float target: the lit scene stored in a 16-bit float picture instead of the packed one. If the white goes away, tell us") } });
             choice(a, "DM_VK_DEPTH_DISCARD", t(a, "Keep unused depth in tile memory"), new String[][] { { "", t(a, "Off"), "" },
                 { "1", t(a, "On"), t(a, "On: depth that nothing reads afterwards is not written back to memory (faster on Mali; a test: tell us if anything flickers)") } });
+            choice(a, "DM_VK_B10_AS_RGBA16", t(a, "Bright scenes in a wider format"), new String[][] { { "", t(a, "Off"), "" },
+                { "1", t(a, "On"), t(a, "On: the lit scene is drawn in a format with more room (RGBA16F instead of R11G11B10F), a test for white or flickering pictures; uses a little more memory") } });
             choice(a, "DM_VK_NO_PASS_MERGE", t(a, "Merge render passes"), new String[][] { { "", t(a, "On"), "" },
                 { "1", t(a, "Off"), t(a, "Off: every render target change starts a new pass") } });
         }
