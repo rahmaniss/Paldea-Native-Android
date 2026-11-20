@@ -1,5 +1,5 @@
 name: Bug report
-description: Something doesn't work in Galar Native (Pokémon Sword / Shield)
+description: Something doesn't work in Paldea Native (Pokémon Scarlet / Violet)
 labels: ["bug"]
 body:
   - type: markdown
@@ -32,9 +32,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Galar Native version
+      label: Paldea Native version
       description: The first line of the log says "app version code ...".
-      placeholder: e.g. 0.81
+      placeholder: e.g. 0.82
     validations:
       required: true
   - type: dropdown
@@ -42,8 +42,8 @@ body:
     attributes:
       label: Game
       options:
-        - Pokémon Shield
-        - Pokémon Sword
+        - Pokémon Violet
+        - Pokémon Scarlet
     validations:
       required: true
   - type: dropdown
@@ -62,7 +62,7 @@ body:
     attributes:
       label: Logs
       description: |
-        Attach `Download/PokemonShield-log-previous.txt` (or the Sword one) **from the run where the problem happened**, and `PokemonShield-log.txt` too.
+        Attach `Download/PokemonViolet-log-previous.txt` (or the Scarlet one) **from the run where the problem happened**, and `PokemonViolet-log.txt` too.
         For a picture problem, ☰ → Bug reports → **Capture a frame** where it shows, and attach the `...-frame-capture.zip` from Download.
       placeholder: Drag the files here
     validations:
