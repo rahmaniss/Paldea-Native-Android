@@ -318,9 +318,14 @@ public final class GameMenu {
         String g = t(a, p[2].equals("high") ? "High" : p[2].equals("auto") ? "Adaptive" : "Low");
         String[][] gfx = { { "", t(a, "Auto"), t(a, "Auto: this phone gets %s", g) }, { "high", t(a, "High"), t(a, "High: TV mode, 1080p, full effects") },
             { "low", t(a, "Low"), t(a, GameSettings.paldea(a) ? "Low: handheld mode, 720p, lighter" : "Low: 3D at about 600p, lighter") }, { "auto", t(a, "Adaptive"), t(a, "Adaptive: High, a lighter picture while the phone is hot or slow") },
-            // Lowest: handheld mode with the game's 3D render scale capped (Pokémon Sword / Shield: the engine's hle_resscale.c; Scarlet / Violet have no such scale)
+            // Lowest: handheld mode with the game's 3D render scale capped (Pokémon Sword / Shield: the engine's hle_resscale.c; Scarlet / Violet: loader.c paldea_scale at 75 %)
             { "lowest", t(a, "Lowest"), t(a, GameSettings.paldea(a) ? "Lowest: handheld mode, 3D at 960x540, coolest" : "Lowest: 3D at 960x540, coolest") } };
-        choice(a, "DM_GRAPHICS", t(a, "Graphics"), GameSettings.paldea(a) ? java.util.Arrays.copyOf(gfx, 4) : gfx);
+        choice(a, "DM_GRAPHICS", t(a, "Graphics"), gfx);   // (Scarlet / Violet's Lowest: handheld with the 3D at 75 %, loader.c paldea_scale)
+        // Scarlet / Violet's sun shadow map (loader.c builtin mods shadows_low / dm_shadow_off): the game's 1024, 512, or none. 2K stays env.txt only (KarPur: bigger maps
+        //   took GPU memory from streaming, NPCs and wild Pokémon vanished)
+        if (GameSettings.paldea(a)) choice(a, "DM_SHADOWS", t(a, "Shadows"), new String[][] { { "", t(a, "Normal"), t(a, "Normal: the game's own shadows") },
+            { "low", t(a, "Low"), t(a, "Low: shadows drawn at half the detail, a little lighter") },
+            { "off", t(a, "Off"), t(a, "Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)") } });
         // the game's own 3D render scale, capped (android_main.c DM_RES_CAP, hle_resscale.c): Sword / Shield, at once. The HUD and text stay sharp; only the 3D is drawn smaller
         // Battery saver (android_main.c power_saver, #333): live
         choice(a, "DM_POWER", t(a, "Power"), new String[][] { { "", t(a, "Balanced"), t(a, "Balanced: the best picture this phone holds at a steady frame rate") },

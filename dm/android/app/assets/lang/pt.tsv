@@ -402,3 +402,7 @@ Auto: a quick test at each start on ARM's driver decides (the log says which)	Au
 Off: as before v0.35	Desligado: como antes da v0.35
 On: for a driver that skips the work of a pass with nothing to draw into (invisible characters and Pokémon)	Ligado: para um driver que pula o trabalho de uma passagem sem nada onde desenhar (personagens e Pokémon invisíveis)
 Left: Auto, the game's own size. Lower: cooler and faster, the 3D softer; text and menus stay sharp. Applies at the next start.	Esquerda: Auto, o tamanho do próprio jogo. Mais baixo: mais fresco e rápido, o 3D mais suave; texto e menus continuam nítidos. Aplica-se no próximo início.
+Normal: the game's own shadows	Normal: as sombras do próprio jogo
+Low: shadows drawn at half the detail, a little lighter	Baixas: sombras com metade do detalhe, um pouco mais leves
+Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)	Desligadas: sem sombras do sol, o mais leve (um teste: conte-nos no GitHub como fica)
+Normal	Normal
