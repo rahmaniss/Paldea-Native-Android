@@ -735,6 +735,19 @@ static void paldea_heat_guard(void) {
         fprintf(stderr, "heat guard: the phone is hot (thermal status %d, headroom %.2f, GPU limit %.0f %% of its top clock): 3D render scale %d %% until it cools\n", st, (double)hr, cs >= 0 ? cs * 100.0 : -1.0, (int)(h * 100 + 0.5f)); }
     else if (on && calm_n >= 12) { on = 0; dm_paldea_scale_set(cap); fprintf(stderr, "heat guard: cooled down: 3D render scale %d %% again\n", (int)(cap * 100 + 0.5f)); }
 }
+// Locked 30, the last lever (as Legends: Arceus's, arceus-renderer eee83d5): when even the lightest step of the ladder falls short with the CPU the limit, the draw
+//   distance is the one setting left that lowers the CPU's work (fewer objects streamed in). It is only applied at start (loader.c paldea_draw), so it is remembered
+//   in <files>/auto_draw.txt ("75": percent) and applied from the next start while the player's Draw distance is at 100 (a distance chosen by hand is never changed);
+//   ten calm minutes with the game thread under half the budget take it back for the start after. on: 1 75 %, 0 back to the game's own
+static void lock30_draw(int on, double cpu, double budget) {
+    char p[1100]; snprintf(p, sizeof p, "%s/auto_draw.txt", g_files);
+    FILE *f = fopen(p, "r"); char cur[16] = ""; if (f) { if (!fgets(cur, sizeof cur, f)) cur[0] = 0; fclose(f); }
+    int was = atoi(cur) >= 50; if (was == on) return;
+    { const char *d = getenv("DM_DRAW_DIST"); if (d && *d && strcmp(d, "100")) return; }   // (chosen by hand)
+    f = fopen(p, "w"); if (!f) return; fputs(on ? "75\n" : "\n", f); fclose(f);
+    fprintf(stderr, on ? "fps guard: the CPU cannot hold 30 here even at the lightest settings (game thread %.1f ms of %.1f): draw distance 75 %% from the next start (Settings -> Draw distance)\n"
+                       : "fps guard: steady with the CPU to spare (game thread %.1f ms of %.1f): the game's own draw distance again from the next start\n", cpu, budget);
+}
 static void graphics_auto(void) {
     static int mode = 1, cool, slow, held, wait = 12, primed, lv, since; static uint64_t last_fr;
     const char *g = getenv("DM_GRAPHICS");
@@ -794,6 +807,11 @@ static void graphics_auto(void) {
             for_rate = slow >= (gpu_bound ? 1 : 2) && !nogain && (!cpu_bound || lv < HH);
         { static int said_cpu; if (short_ && cpu_bound && lv >= HH && !(said_cpu++ % 12))
               fprintf(stderr, "fps guard: %.1f fps, short of %d, but the CPU is the limit (game thread %.1f ms, GPU %.1f ms of %.1f): the picture stays\n", fps, g_fps_guard, cpu, gpu, budget); }
+        // the last lever: half a minute short in handheld mode (the lightest the CPU gets: a smaller picture does not help it) with the CPU the limit: draw distance 75 %
+        //   from the next start; ten calm minutes with the CPU half idle take it back
+        { static int cpu_short; cpu_short = short_ && cpu_bound ? cpu_short + 1 : 0;
+          if (cpu_short >= 6 && lv >= HH) lock30_draw(1, cpu, budget);
+          if (full && cpu > 0 && cpu < 0.5 * budget && cool >= 120) lock30_draw(0, cpu, budget); }
         int to = lv + 1; if ((for_heat || cpu_bound) && to < HH) to = HH; while (to < NL && !PAL_OK(to)) to++;
         int up = lv - 1; while (up > 0 && !PAL_OK(up)) up--;
         // up early: the GPU's time projected to the step above (pixels: the mode's height 1080 / 720, times the scale, squared) fits in 75 % of the budget
@@ -1019,6 +1037,13 @@ static void host_start(void) {
       if (g && (!strcmp(g, "low") || !strcmp(g, "lowest"))) setenv("DM_OPMODE", galar ? "1" : "0", 0); else if (g && (!strcmp(g, "high") || !strcmp(g, "auto"))) setenv("DM_OPMODE", "1", 0);
       if (g && !strcmp(g, "lowest")) setenv("DM_RES_CAP", galar ? "0.50" : "0.75", 0);
       else if (g && !strcmp(g, "low") && galar) setenv("DM_RES_CAP", "0.55", 0); }
+    // Scarlet / Violet's draw distance (loader.c paldea_draw): the slider's DM_DRAW_DIST, or, while it is at 100 (Default), what the fps guard remembered for this phone
+    //   (lock30_draw: <files>/auto_draw.txt, "75")
+    { char p[1200], cur[16] = ""; snprintf(p, sizeof p, "%s/auto_draw.txt", g_files); FILE *f = fopen(p, "r");
+      if (f) { if (!fgets(cur, sizeof cur, f)) cur[0] = 0; fclose(f); }
+      const char *d = getenv("DM_DRAW_DIST"); int hand = d && *d && strcmp(d, "100");
+      if (!hand && atoi(cur) >= 50 && atoi(cur) <= 200) { char v[8]; snprintf(v, sizeof v, "%d", atoi(cur)); setenv("DM_DRAW_DIST_AUTO", v, 1);
+          fprintf(stderr, "boot: draw distance %s %%, chosen by the fps guard (this phone's CPU could not hold 30 at the game's own distance; Settings -> Draw distance overrides it)\n", v); } }
 #if defined(DM_GAME_ANDROID_OPMODE) && DM_GAME_ANDROID_OPMODE >= 0
     { char m[4]; snprintf(m, sizeof m, "%d", DM_GAME_ANDROID_OPMODE); setenv("DM_OPMODE", m, 0); }   // the profile's android_op_mode (env.txt DM_OPMODE wins)
 #endif   // real sound output (AAudio, compat/aaudio_unit.c); env.txt can set 0

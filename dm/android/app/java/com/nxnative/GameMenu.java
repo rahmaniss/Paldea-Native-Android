@@ -327,6 +327,14 @@ public final class GameMenu {
         if (GameSettings.paldea(a)) choice(a, "DM_SHADOWS", t(a, "Shadows"), new String[][] { { "", t(a, "Normal"), t(a, "Normal: the game's own shadows") },
             { "low", t(a, "Low"), t(a, "Low: shadows drawn at half the detail, a little lighter") },
             { "off", t(a, "Off"), t(a, "Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)") } });
+        // Scarlet / Violet: one render size in both modes (loader.c paldea_wide: the resolution function's size loads), from the next start
+        if (GameSettings.paldea(a)) choice(a, "DM_PALDEA_RES", t(a, "Resolution"), new String[][] {
+            { "", t(a, "Game's own"), t(a, "The game's own: 1080p docked, 720p handheld") },
+            { "720", "720p", t(a, "720p: lightest, for phones that cannot hold 30 (from the next start)") },
+            { "1080", "1080p", t(a, "1080p in both modes: handheld's lighter settings at the docked size (from the next start)") },
+            { "1440", "1440p", t(a, "1440p: sharper, but heavier on the GPU (fewer fps, a warmer phone; from the next start)") } });
+        // Scarlet / Violet: how far objects stream in and trees / grass fade (loader.c paldea_draw), from the next start; the same setting and scale as Legends: Arceus's
+        if (GameSettings.paldea(a)) slider(a, t(a, "Draw distance"), "DM_DRAW_DIST", 50, 200, 100, v -> v == 100 ? t(a, "the game's own (100 %)") : v + " %");
         // the game's own 3D render scale, capped (android_main.c DM_RES_CAP, hle_resscale.c): Sword / Shield, at once. The HUD and text stay sharp; only the 3D is drawn smaller
         // Battery saver (android_main.c power_saver, #333): live
         choice(a, "DM_POWER", t(a, "Power"), new String[][] { { "", t(a, "Balanced"), t(a, "Balanced: the best picture this phone holds at a steady frame rate") },

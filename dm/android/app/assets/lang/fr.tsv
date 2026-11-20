@@ -406,3 +406,11 @@ Low: shadows drawn at half the detail, a little lighter	Basses : ombres à moiti
 Off: no sun shadows, the lightest (a test: tell us on GitHub what it looks like)	Désactivées : pas d’ombres du soleil, le plus léger (un test : dites-nous sur GitHub ce que ça donne)
 Normal	Normal
 Widescreen: the game drawn at your screen's shape, nothing stretched (experimental: uses more GPU memory; tell us on GitHub if things pop in at the edges)	Écran large : le jeu dessiné à la forme de votre écran, sans étirement (expérimental : utilise plus de mémoire GPU ; dites-nous sur GitHub si des objets apparaissent soudain sur les bords)
+Draw distance	Distance d'affichage
+the game's own (100 %)	celle du jeu (100 %)
+Resolution	Résolution
+720p: lightest, for phones that cannot hold 30 (from the next start)	720p : le plus léger, pour les téléphones qui ne tiennent pas 30 (au prochain lancement)
+1440p: sharper, but heavier on the GPU (fewer fps, a warmer phone; from the next start)	1440p : plus net, mais plus lourd pour le GPU (moins de fps, téléphone plus chaud ; au prochain lancement)
+Game's own	Celle du jeu
+The game's own: 1080p docked, 720p handheld	Celle du jeu : 1080p en mode TV, 720p en mode portable
+1080p in both modes: handheld's lighter settings at the docked size (from the next start)	1080p dans les deux modes : les réglages plus légers du mode portable à la taille du mode TV (au prochain démarrage)

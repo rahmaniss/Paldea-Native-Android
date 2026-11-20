@@ -636,29 +636,82 @@ static void paldea_rwx_open(module_t *m) {
 //   *(main+0x475a0a0)+0x100 and, times 3DBufferWidth/HeightScale, as the 3D render size (its tail; paldea_scale). The height load becomes BL to a stub in the gap
 //   after the code (+0x343fd40, after paldea_scale's) that loads the height and sets the width = height x the ratio (16.16 fixed point, rounded to even, at most
 //   2.4). x16 and x30 are free there (the function calls on right after). Render targets grow with the width (about 25 % at 20:9). Every word is checked first
+// Resolution (DM_PALDEA_RES = 720 / 1080 / 1440, the settings' choice; unset: the game's own, 1080p docked / 720p handheld): one size in both modes, the height
+//   given and the width 16:9 of it (or the screen's shape with widescreen). The same function: the two loads @+0xdfa860 / +0xdfa864 become movz, and the reloads its
+//   tail makes for the 3D size (+0xdfa920 width, +0xdfa924 height) the same values. With widescreen the stub's height load becomes the movz. From the next start;
+//   1440p is heavier on the GPU and its memory
 static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
     if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
-    const char *a = getenv("DM_ASPECT"), *r = getenv("DM_WIDE_RATIO"), *e = getenv("DM_WIDE_RENDER");
-    if (!a || strcmp(a, "wide") || (e && atoi(e) <= 0)) return 0;
-    double ratio = r ? atof(r) : 0; if (ratio < 16.0 / 9.0 + 0.01) return 0;
+    const char *a = getenv("DM_ASPECT"), *r = getenv("DM_WIDE_RATIO"), *e = getenv("DM_WIDE_RENDER"), *re = getenv("DM_PALDEA_RES");
+    int wide = a && !strcmp(a, "wide") && !(e && atoi(e) <= 0);
+    double ratio = wide && r ? atof(r) : 0; if (ratio < 16.0 / 9.0 + 0.01) wide = 0;
     if (ratio > 2.4) ratio = 2.4;
-    const uint64_t site = 0xdfa864, cave = 0x343fd40, lit = cave + 0x20; const uint32_t orig = 0xb9443b17u, call = 0x94991537u;
-    static const uint32_t code[7] = { 0xb9443b17u,   // ldr w23, [x24, #0x438]       (the height, as the game loads it)
+    uint32_t H = re ? (uint32_t)atoi(re) : 0; if (H != 720 && H != 1080 && H != 1440) H = 0;
+    uint32_t W = H * 16 / 9;
+    if (!wide && !H) return 0;
+    const uint64_t site0 = 0xdfa860, site = 0xdfa864, site2 = 0xdfa920, site3 = 0xdfa924, cave = 0x343fd40, lit = cave + 0x20;
+    const uint32_t orig0 = 0xb9443316u, orig = 0xb9443b17u, orig2 = 0xb9400337u, orig3 = 0xb9400316u, call = 0x94991537u, mov2 = 0x2a1603f7u;
+    #define MOVZ_W(rd, v) (0x52800000u | ((uint32_t)(v) & 0xffffu) << 5 | (rd))
+    uint32_t code[7] = { H ? MOVZ_W(23, H) : 0xb9443b17u,   // ldr w23, [x24, #0x438]       (the height, as the game loads it; movz w23, #H with a resolution chosen)
         0x180000f0u, 0x1b107ef6u,                    // ldr w16, ratio / mul w22, w23, w16
         0x114042d6u, 0x53117ed6u, 0x531f7ad6u,       // add w22, w22, #0x10000 / lsr w22, w22, #17 / lsl w22, w22, #1   (to the nearest even width)
         0xd65f03c0u };                               // ret
     // +0xdfa920 reloads the width from the config (ldr w23, [x25]) for the 3D ResolutionWidth it publishes later: mov w23, w22 (the widened width, still in w22) keeps
-    //   the 3D size the same shape as the UI size (found by the other session, checked in both mains)
-    const uint64_t site2 = 0xdfa920; const uint32_t orig2 = 0xb9400337u, mov2 = 0x2a1603f7u;
-    uint32_t w, w2; memcpy(&w, m->base + site, 4); memcpy(&w2, m->base + site2, 4);
-    int ok = w == orig && w2 == orig2 && site2 + 4 <= m->text_end && !overlaps_rewrite(m, site2, 4, p0, p1) && site + 4 <= m->text_end && !overlaps_rewrite(m, site, 4, p0, p1) && m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim;
-    for (unsigned i = 0; ok && i < 9; i++) { memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
-    if (!ok) { LOG("[RED] %s: widescreen not applied: the resolution function's height load or the gap after the code differ, or were rewritten", m->name); return 0; }
-    uint32_t fx = (uint32_t)(ratio * 65536.0 + 0.5);
-    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4); memcpy(m->base + site2, &mov2, 4);
-    LOG("%s: widescreen for Scarlet / Violet 4.0.0: the game renders at the screen's shape (%.4f: 1080 tall -> %u wide, 720 -> %u)", m->name, ratio,
-        (uint32_t)((1080u * fx + 0x10000u) >> 17) << 1, (uint32_t)((720u * fx + 0x10000u) >> 17) << 1);
-    return 2;
+    //   the 3D size the same shape as the UI size (found by the other session, checked in both mains); +0xdfa924 reloads the height the same way (ldr w22, [x24])
+    uint32_t w0, w, w2, w3; memcpy(&w0, m->base + site0, 4); memcpy(&w, m->base + site, 4); memcpy(&w2, m->base + site2, 4); memcpy(&w3, m->base + site3, 4);
+    int ok = w0 == orig0 && w == orig && w2 == orig2 && w3 == orig3 && site3 + 4 <= m->text_end && !overlaps_rewrite(m, site0, 8, p0, p1) && !overlaps_rewrite(m, site2, 8, p0, p1);
+    if (wide) { ok = ok && m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim;
+                for (unsigned i = 0; ok && i < 9; i++) { memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; } }
+    if (!ok) { LOG("[RED] %s: %s not applied: the resolution function's size loads or the gap after the code differ, or were rewritten", m->name, wide ? "widescreen" : "the resolution"); return 0; }
+    uint32_t m3 = MOVZ_W(22, H);
+    if (wide) {
+        uint32_t fx = (uint32_t)(ratio * 65536.0 + 0.5);
+        memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4); memcpy(m->base + site2, &mov2, 4);
+        if (H) memcpy(m->base + site3, &m3, 4);
+        if (H) LOG("%s: widescreen for Scarlet / Violet 4.0.0 (%.4f), resolution %up in both modes: %u wide", m->name, ratio, H, (uint32_t)((H * fx + 0x10000u) >> 17) << 1);
+        else LOG("%s: widescreen for Scarlet / Violet 4.0.0: the game renders at the screen's shape (%.4f: 1080 tall -> %u wide, 720 -> %u)", m->name, ratio,
+                 (uint32_t)((1080u * fx + 0x10000u) >> 17) << 1, (uint32_t)((720u * fx + 0x10000u) >> 17) << 1);
+        return H ? 4 : 2;
+    }
+    uint32_t m0 = MOVZ_W(22, W), m1 = MOVZ_W(23, H), m2 = MOVZ_W(23, W);
+    memcpy(m->base + site0, &m0, 4); memcpy(m->base + site, &m1, 4); memcpy(m->base + site2, &m2, 4); memcpy(m->base + site3, &m3, 4);
+    LOG("%s: resolution %ux%u for Scarlet / Violet 4.0.0, in both modes (the game's own: 1920x1080 docked, 1280x720 handheld)", m->name, W, H);
+    #undef MOVZ_W
+    return 4;
+}
+// Draw distance for Pokémon Scarlet / Violet 4.0.0 (DM_DRAW_DIST: percent, 50-200, the settings' slider, 100 the game's own; near / far / veryfar = 75 / 150 / 200;
+//   DM_DRAW_DIST_AUTO: what the fps guard chose for this phone, android_main.c lock30_draw, used while the slider is at 100). Applied at start, in two places:
+//   - the per-object streaming distances: both readers (+0x2150cd8, +0x202722c) call +0x2027314 with x2 -> a pointer to a fresh copy on the caller's stack of four
+//     floats (Realizing / Unrealizing / Loading / Unloading), read from the registry just before. Each call becomes BL to a stub that scales the four in place, then
+//     branches on to +0x2027314 (x30 still the caller's return; x16 and s17-s19 are scratch at a call)
+//   - the trees' and grass's fade distances: the six loads ldr s8, [x8, x9] in +0x162a0c8 (each a parameter table's value, else 0) become BL to a stub that loads and
+//     scales s8 (x30 is saved by that function, which calls out; s16 is not used in it). At most 1.5 there (grass that far costs the GPU most)
+//   The stubs go in the gap after the code from +0x343fd80 (after paldea_scale's and paldea_wide's). Every word is checked in both mains (identical) first
+static int paldea_draw(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
+    if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
+    const char *d = getenv("DM_DRAW_DIST"), *a = getenv("DM_DRAW_DIST_AUTO"); int pct = 100;
+    if (d && *d) pct = !strcmp(d, "near") ? 75 : !strcmp(d, "far") ? 150 : !strcmp(d, "veryfar") ? 200 : atoi(d);
+    int auto_ = 0; if ((pct == 100 || pct < 50 || pct > 200) && a && atoi(a) >= 50 && atoi(a) <= 200) { pct = atoi(a); auto_ = 1; }
+    if (pct < 50 || pct > 200 || pct == 100) return 0;
+    const uint64_t S = 0x343fd80, SL = S + 44, F = 0x343fdb0, FL = F + 16, T = 0x2027314;
+    static const uint64_t ss[2] = { 0x2150cd8, 0x202722c }, fs[6] = { 0x162a27c, 0x162a4f8, 0x162a76c, 0x162a9e0, 0x162ac54, 0x162aec8 };
+    uint32_t w; int ok = m->text_end <= S && FL + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && FL + 4 <= lim;
+    for (int i = 0; i < 2 && ok; i++) { memcpy(&w, m->base + ss[i], 4); ok = w == (0x94000000u | (uint32_t)(((T - ss[i]) >> 2) & 0x3FFFFFF)) && !overlaps_rewrite(m, ss[i], 4, p0, p1); }
+    for (int i = 0; i < 6 && ok; i++) { memcpy(&w, m->base + fs[i], 4); ok = w == 0xbc696908u && !overlaps_rewrite(m, fs[i], 4, p0, p1); }
+    for (uint64_t o = S; o < FL + 4 && ok; o += 4) { memcpy(&w, m->base + o, 4); ok = !w; }
+    if (!ok) { LOG("[RED] %s: draw distance %d %% not applied: the streaming / fade sites or the gap after the code differ, or were rewritten", m->name, pct); return 0; }
+    uint32_t sc[11] = { 0xf9400050u,                  // ldr x16, [x2]           (the four floats' copy)
+        0x1C000000u | (uint32_t)(((SL - (S + 4)) >> 2) << 5) | 17,   // ldr s17, factor
+        0x2d404e12u, 0x1e310a52u, 0x1e310a73u, 0x2d004e12u,          // ldp s18, s19, [x16] / fmul x2 / stp
+        0x2d414e12u, 0x1e310a52u, 0x1e310a73u, 0x2d014e12u,          // the same at [x16, #8]
+        0x14000000u | (uint32_t)(((T - (S + 40)) >> 2) & 0x3FFFFFF) };   // b +0x2027314
+    uint32_t fc[4] = { 0xbc696908u, 0x1C000000u | (uint32_t)(((FL - (F + 4)) >> 2) << 5) | 16, 0x1e300908u, 0xd65f03c0u };   // ldr s8, [x8, x9] / ldr s16, factor / fmul s8, s8, s16 / ret
+    float k = pct / 100.0f, kf = k > 1.5f ? 1.5f : k;
+    memcpy(m->base + S, sc, sizeof sc); memcpy(m->base + SL, &k, 4); memcpy(m->base + F, fc, sizeof fc); memcpy(m->base + FL, &kf, 4);
+    for (int i = 0; i < 2; i++) { w = 0x94000000u | (uint32_t)(((S - ss[i]) >> 2) & 0x3FFFFFF); memcpy(m->base + ss[i], &w, 4); }
+    for (int i = 0; i < 6; i++) { w = 0x94000000u | (uint32_t)(((F - fs[i]) >> 2) & 0x3FFFFFF); memcpy(m->base + fs[i], &w, 4); }
+    LOG("%s: draw distance %d %%%s for Scarlet / Violet 4.0.0: objects stream in and out x%.2f as far, trees and grass fade x%.2f", m->name, pct, auto_ ? " (the fps guard's, for this phone's CPU)" : "", (double)k, (double)kf);
+    return 8;
 }
 static int builtin_patches(module_t *m, uint64_t lim, int64_t p0, int64_t p1, int modded) {
     (void)modded;
@@ -668,6 +721,7 @@ static int builtin_patches(module_t *m, uint64_t lim, int64_t p0, int64_t p1, in
     n += wide_render_patch(m, p0, p1);
     n += paldea_scale(m, lim, p0, p1);
     n += paldea_wide(m, lim, p0, p1);
+    n += paldea_draw(m, lim, p0, p1);
     return n + (g_bmod_fps ? 0 : fps_patch(m, lim, p0, p1));
 }
 // Built-in: DM_FPS_TARGET=60..120 (opt-in, the in-game menu; experimental) for Pokémon Shield and Sword 1.3.2's main: the present interval the game asks NVN for, 2 (30 fps),
