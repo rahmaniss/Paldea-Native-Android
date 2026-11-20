@@ -738,8 +738,8 @@ static void paldea_heat_guard(void) {
 static void graphics_auto(void) {
     static int mode = 1, cool, slow, held, wait = 12, primed, lv, since; static uint64_t last_fr;
     const char *g = getenv("DM_GRAPHICS");
-    paldea_heat_guard();   // (Scarlet / Violet only: a no-op where loader.c paldea_scale is not applied)
-    if (!(g && !strcmp(g, "auto") && g_th_mgr && g_th_st) && !g_fps_guard) return;
+    // (Scarlet / Violet: the heat guard only where Auto's own guard is off, as Galar's heat_guard: on Auto that guard's TV / handheld step reacts to the same heat)
+    if (!(g && !strcmp(g, "auto") && g_th_mgr && g_th_st) && !g_fps_guard) { paldea_heat_guard(); return; }
     int hot = 0, calm = 1;
     if (g_th_mgr && g_th_st) { int st = g_th_st(g_th_mgr); float hr = g_th_hr ? g_th_hr(g_th_mgr, 10) : -1.0f;
         // hot from "moderate" (2): the status a Galaxy S25+ sat at with all its cores capped to 1.4-2.2 GHz; "severe" (3) came too late to save the frame rate
