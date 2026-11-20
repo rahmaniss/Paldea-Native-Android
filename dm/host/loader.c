@@ -674,6 +674,21 @@ static int paldea_wide(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
         uint32_t fx = (uint32_t)(ratio * 65536.0 + 0.5);
         memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &fx, 4); memcpy(m->base + site, &call, 4); memcpy(m->base + site2, &mov2, 4);
         if (H) memcpy(m->base + site3, &m3, 4);
+        // The camera's aspect at the screen's shape too (else the wider picture is the 16:9 view stretched): the game's 16:9 (1.77778, 0x3fe38e39) next to its 30°
+        //   field of view in the three places that set a camera's defaults: the camera constructor (+0x13275e0 / +0x13275e4, x9), the render camera record
+        //   (+0xbd2d3c / +0xbd2d40, x8) and the culling task's own (+0xe7a28c / +0xe7a290, x10): movk ..., lsl 32 / lsl 48 with the ratio's float bits. The camera's
+        //   aspect (obj+0x190) feeds the projection, the CPU culling and the shadow fitting, so they stay in step. Sub-view cameras (character creation, the
+        //   picture-in-picture views) widen too. Every word checked in both mains; DM_WIDE_CAMERA=0 leaves it out
+        { const char *wc = getenv("DM_WIDE_CAMERA");
+          static const uint64_t cs[3] = { 0x13275e0, 0xbd2d3c, 0xe7a28c }; static const uint32_t rd[3] = { 9, 8, 10 };
+          float rf = (float)ratio; uint32_t rb; memcpy(&rb, &rf, 4);
+          int cok = !(wc && atoi(wc) <= 0);
+          for (int i = 0; i < 3 && cok; i++) { uint32_t a0, a1; memcpy(&a0, m->base + cs[i], 4); memcpy(&a1, m->base + cs[i] + 4, 4);
+              cok = a0 == (0xF2C00000u | 0x8e39u << 5 | rd[i]) && a1 == (0xF2E00000u | 0x3fe3u << 5 | rd[i]) && !overlaps_rewrite(m, cs[i], 8, p0, p1); }
+          if (cok) { for (int i = 0; i < 3; i++) { uint32_t a0 = 0xF2C00000u | (rb & 0xffffu) << 5 | rd[i], a1 = 0xF2E00000u | (rb >> 16) << 5 | rd[i];
+                         memcpy(m->base + cs[i], &a0, 4); memcpy(m->base + cs[i] + 4, &a1, 4); }
+                     LOG("%s: widescreen camera: the cameras' 16:9 default is %.4f (projection, culling and shadows follow it)", m->name, ratio); }
+          else if (!(wc && atoi(wc) <= 0)) LOG("[RED] %s: widescreen camera not applied: a camera default differs or was rewritten (the picture stays the 16:9 view, stretched)", m->name); }
         if (H) LOG("%s: widescreen for Scarlet / Violet 4.0.0 (%.4f), resolution %up in both modes: %u wide", m->name, ratio, H, (uint32_t)((H * fx + 0x10000u) >> 17) << 1);
         else LOG("%s: widescreen for Scarlet / Violet 4.0.0: the game renders at the screen's shape (%.4f: 1080 tall -> %u wide, 720 -> %u)", m->name, ratio,
                  (uint32_t)((1080u * fx + 0x10000u) >> 17) << 1, (uint32_t)((720u * fx + 0x10000u) >> 17) << 1);
