@@ -602,7 +602,7 @@ public final class GameMenu {
                 { "0", t(a, "Off"), t(a, "Off: the GPU reads the game's uniform data directly (a test for invisible characters and Pokémon; if the game then closes at start, set Auto again)") },
                 { "1", t(a, "On"), t(a, "On: each draw's uniform data is copied when it is recorded, instead of the GPU reading the game's memory directly") } });
             // transform feedback captures (nvn_vk.c tf_selftest.h): Auto = the start-up test on ARM's driver decides
-            if (GameSettings.arceus(a) || GameSettings.paldea(a)) choice(a, "DM_VK_TF_ATT", t(a, "Animated models: a render target for their capture"), new String[][] {
+            if (GameSettings.paldea(a)) choice(a, "DM_VK_TF_ATT", t(a, "Animated models: a render target for their capture"), new String[][] {
                 { "", t(a, "Auto"), t(a, "Auto: a quick test at each start on ARM's driver decides (the log says which)") },
                 { "0", t(a, "Off"), t(a, "Off: as before v0.35") },
                 { "1", t(a, "On"), t(a, "On: for a driver that skips the work of a pass with nothing to draw into (invisible characters and Pokémon)") } });
