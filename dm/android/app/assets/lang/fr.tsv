@@ -401,3 +401,4 @@ Animated models: a render target for their capture	Modèles animés : une cible 
 Auto: a quick test at each start on ARM's driver decides (the log says which)	Auto : un test rapide à chaque démarrage avec le pilote d'ARM décide (le journal indique lequel)
 Off: as before v0.35	Désactivé : comme avant la v0.35
 On: for a driver that skips the work of a pass with nothing to draw into (invisible characters and Pokémon)	Activé : pour un pilote qui saute le travail d'une passe sans rien où dessiner (personnages et Pokémon invisibles)
+Left: Auto, the game's own size. Lower: cooler and faster, the 3D softer; text and menus stay sharp. Applies at the next start.	À gauche : Auto, la taille du jeu. Plus bas : plus frais et plus rapide, la 3D plus douce ; textes et menus restent nets. S’applique au prochain démarrage.

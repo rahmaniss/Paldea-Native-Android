@@ -579,12 +579,42 @@ static int wide_render_patch(module_t *m, int64_t p0, int64_t p1) {
     LOG("%s: true aspect ratio for %s: the game renders %ux1080 in TV mode, %ux720 handheld (screen %.4f), instead of 16:9 stretched", m->name, WIDE_SITES[si].game, w1080, w720, ratio);
     return 4;
 }
+// 3D render scale for Pokémon Scarlet / Violet 4.0.0 (DM_RES_CAP 0.5 - 1, the menu's slider; read at start). The two mains are one program (same addresses). The game
+//   keeps its 3D buffer's scale in the registry properties 3DBufferWidthScale / HeightScale (keys 0x4aa9ba3dccea94ea / 0x66e7a756352d0d9f) and reads them back in two
+//   places, each multiplying them into a size: main+0xd02808 (the UI size at *(main+0x475a0a0)+0x100 x the scales, via the registry's vtable +0x38; FMUL @+0xd02908 width,
+//   @+0xd0291c height) and the tail of the resolution function main+0xdfa800 (the scales clamped to [0.01, 1], FMUL @+0xdfabf8 width, @+0xdfac04 height: the 3D render
+//   size). Each of the four FMULs becomes BL to a stub in the zero gap after the code (the code ends at +0x343fc90, its page at +0x3440000) that does the FMUL, then
+//   multiplies the result by the slider's value (a word after the stubs), d16 saved on the stack. x30 is free at all four (both functions make calls after them).
+//   Applied only below 1.0 and only at start: whether both sizes are recomputed when the value changes is not known yet, so no live change (and no Adaptive Resolution)
+//   until a phone run shows it. Every word is checked first in the main being loaded (the four FMULs, the gap's zeros)
+static int paldea_scale(module_t *m, uint64_t lim, int64_t p0, int64_t p1) {
+    if (strncasecmp(m->build_id, "709bfd66115298640155fcc4979dba15", 32) && strncasecmp(m->build_id, "421c5411b487eb4d049dd065fec95477", 32)) return 0;
+    const char *e = getenv("DM_RES_CAP"); float c = e ? (float)atof(e) : 1.0f;
+    if (!(c >= 0.5f && c < 1.0f)) return 0;
+    static const struct { uint64_t off; uint32_t orig, call; } S[4] = {
+        { 0xd02908, 0x1e210841u, 0x949cf4e2u }, { 0xd0291c, 0x1e210800u, 0x949cf4e3u }, { 0xdfabf8, 0x1e210808u, 0x94991432u }, { 0xdfac04, 0x1e200849u, 0x94991435u } };
+    static const uint32_t code[24] = {   // per site: the FMUL / str d16, [sp, #-16]! / ldr s16, value / fmul sD, sD, s16 / ldr d16, [sp], #16 / ret
+        0x1e210841u, 0xfc1f0ff0u, 0x1c0002d0u, 0x1e300821u, 0xfc4107f0u, 0xd65f03c0u,   // s1 = s2 * s1 (width scale x UI width)
+        0x1e210800u, 0xfc1f0ff0u, 0x1c000210u, 0x1e300800u, 0xfc4107f0u, 0xd65f03c0u,   // s0 = s0 * s1 (height scale x UI height)
+        0x1e210808u, 0xfc1f0ff0u, 0x1c000150u, 0x1e300908u, 0xfc4107f0u, 0xd65f03c0u,   // s8 = s0 * s1 (3D width)
+        0x1e200849u, 0xfc1f0ff0u, 0x1c000090u, 0x1e300929u, 0xfc4107f0u, 0xd65f03c0u }; // s9 = s2 * s0 (3D height)
+    const uint64_t cave = 0x343fc90, lit = cave + sizeof code;   // (the value's word: +0x343fcf0)
+    int ok = m->text_end <= cave && lit + 4 <= ((m->text_end + 0x3FFF) & ~0x3FFFull) && lit + 4 <= lim && !overlaps_rewrite(m, cave, sizeof code + 4, p0, p1);
+    for (unsigned i = 0; ok && i < 4; i++) { uint32_t w; memcpy(&w, m->base + S[i].off, 4); ok = S[i].off + 4 <= m->text_end && w == S[i].orig && !overlaps_rewrite(m, S[i].off, 4, p0, p1); }
+    for (unsigned i = 0; ok && i < 25; i++) { uint32_t w; memcpy(&w, m->base + cave + 4 * i, 4); ok = !w; }
+    if (!ok) { LOG("[RED] %s: 3D render scale not applied: the four size multiplies or the gap after the code differ, or were rewritten", m->name); return 0; }
+    memcpy(m->base + cave, code, sizeof code); memcpy(m->base + lit, &c, 4);
+    for (unsigned i = 0; i < 4; i++) memcpy(m->base + S[i].off, &S[i].call, 4);
+    LOG("%s: 3D render scale for Scarlet / Violet 4.0.0: %.2f on the game's own (both size computations of 3DBufferWidthScale / HeightScale; set at start)", m->name, (double)c);
+    return 5;
+}
 static int builtin_patches(module_t *m, uint64_t lim, int64_t p0, int64_t p1, int modded) {
     (void)modded;
     if (strcmp(m->name, "main")) return 0;
     int n = bmod_apply(m, lim, p0, p1);
     n += wide_patch(m, lim, p0, p1);
     n += wide_render_patch(m, p0, p1);
+    n += paldea_scale(m, lim, p0, p1);
     return n + (g_bmod_fps ? 0 : fps_patch(m, lim, p0, p1));
 }
 // Built-in: DM_FPS_TARGET=60..120 (opt-in, the in-game menu; experimental) for Pokémon Shield and Sword 1.3.2's main: the present interval the game asks NVN for, 2 (30 fps),
