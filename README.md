@@ -64,6 +64,10 @@ Full notes for each version are on the [releases page](https://github.com/simipo
 GAME=01008F6008C5E000 scripts/build_apk_pc.sh   # → PaldeaNative.apk (Scarlet + Violet)
 ```
 
+## License
+
+Paldea Native is free software under the **GNU General Public License, version 3 or later** ([LICENSE](LICENSE), [NOTICE](NOTICE)), like Galar Native. The code that came from d2r-mobile / nxnative, and the engine's code from before the switch, also stay under their original [MIT notice](LICENSE-MIT). [Additional terms](ADDITIONAL-TERMS.md) (GPL section 7) apply to the maintainer's code from 2026-11-25 on: a modified build must say it is unofficial and must not claim to be the official build or to be signed with the project's release key. Official builds come only from this repository's [releases](https://github.com/simipoB/Paldea-Native-Android/releases).
+
 ## Credits
 
 The engine and tools are Galar Native's: see its README. Pokémon Legends: Z-A's port in the same engine showed the way through Trinity's packs and its allocator.
