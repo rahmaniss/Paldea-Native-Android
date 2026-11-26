@@ -319,7 +319,7 @@ def fb_refs(d, t, i):   # the tables / strings a vector of offsets points at
 
 def fb_root(d, at=0): return at + struct.unpack_from('<I', d, at)[0]
 
-def trpfs_jobs(files, parts=64):
+def trpfs_jobs(files, parts=64, sources=None):   # TARGETED: sources = the profile map's RomFS sources (targeted_inputs): only the packs they name (and their same-type packs) are read
     """Game Freak's Trinity engine (Pokémon Legends: Z-A): almost everything is in arc/data.trpfs, packs of files, with arc/data.trpfd as their index, both FlatBuffers. The descriptor's root table:
     0 file hashes [u64], 1 pack names [string], 2 file infos [{0 pack index u64}] (in file hash order), 3 pack infos [{0 pack size u64, 1 file count u64}]. The file system: 'ONEPACK\\0', u64 offset of its
     root table {0 pack name hashes [u64], 1 pack offsets [u64]}, each pack a table of its own at its offset. A pack is named through its first file's hash (its own name hash is not a plain FNV-1a of the
@@ -342,6 +342,17 @@ def trpfs_jobs(files, parts=64):
                 pr = fb_root(d, off); h0 = fb_vec(d, pr, 0)
                 if not h0[1] or struct.unpack_from('<Q', d, h0[0])[0] not in pack_of: red(f'{r}: the pack at {off:#x} has no file the descriptor lists')
                 i = pack_of[struct.unpack_from('<Q', d, h0[0])[0]]; packs.append((off, names[i], sizes[i]))
+        # TARGETED begin: a Trinity source in the map is '<archive path>#<pack name>#<file hash>#...'. Only the packs it names are read, and the packs of the same resource type
+        # (the map records first appearances; another pack of the type can pair those shaders again). main() accepts the result only when its tables are the profile's byte for byte
+        if sources is not None:
+            prefix = r + '#'
+            wanted = {s[len(prefix):].split('#', 1)[0] for s in sources if s.startswith(prefix)}
+            if wanted and wanted.issubset(name for _, name, _ in packs):
+                count = len(packs)
+                suffixes = tuple({'.' + '.'.join(name.rsplit('.', 2)[-2:]) for name in wanted if name.count('.') >= 2 and name.endswith('.trpak')})
+                packs = [pack for pack in packs if pack[1] in wanted or pack[1].endswith(suffixes)]
+                print(f'targeted Trinity: /{r}: reading {len(packs):,} of {count:,} packs', flush=True)
+        # TARGETED end
         cur, size, step = [], 0, sum(s for _, _, s in packs) / parts
         for off, name, s in sorted(packs):
             cur.append((off, name)); size += s
@@ -737,7 +748,57 @@ def pmap(J, fn, items, initargs):   # fn over items in J worker processes, resul
         return out
     with cf.ProcessPoolExecutor(J, initializer=_pool_init, initargs=initargs) as ex: return list(ex.map(fn, items, chunksize=16))
 
+class Untargeted(Exception): pass   # the targeted scan cannot be taken (the reason is the message)
+NOT_ROMFS = ('/glslc_capture/', '/ue_shaders/', '/nvn_capture/', '/nvn_shdump')   # map sources that are no RomFS file (main's have no leading '/')
+
+def targeted_inputs(files):
+    """DM_SPLIT_TARGETED=1: ({RomFS files that hold the shaders of the profile's shader_map.tsv, plus the profile's shader_files.tsv ones}, {the map's RomFS sources without their leading '/'}).
+    Raises Untargeted when the profile has no map or the map names a file the dump lacks"""
+    mp = str(GAME.table('shader_map.tsv'))
+    if not os.path.isfile(mp): raise Untargeted('the profile has no shader_map.tsv')
+    rels, sources, want = {r for _, r in files}, set(), set()
+    with open(mp, encoding='utf-8') as f:
+        for ln in f:
+            c = ln.rstrip('\n').split('\t')
+            if len(c) > 4 and c[0].endswith('.bin') and c[4].startswith('/') and not c[4].startswith(NOT_ROMFS): sources.add(c[4][1:])
+    for s in sorted(sources):
+        bounds = [m.start() for m in re.finditer(r'[/#:]|@0x[0-9a-f]+', s)] + [len(s)]   # the file is a prefix of the source: it ends at a '/', '#', ':' or the end
+        r = next((s[:i] for i in reversed(bounds) if s[:i] in rels), None)
+        if r is None: raise Untargeted(f"the profile's shader_map.tsv names /{s}, and the dump has no such file")
+        want.add(r)
+    fl = str(GAME.table('shader_files.tsv'))   # files that hold only copies of shaders found earlier, but whose variations can pair them anew (a full split's list), when the profile has it
+    if os.path.isfile(fl):
+        with open(fl, encoding='utf-8') as f: want |= {r for r in (ln.rstrip('\r\n') for ln in f if not ln.startswith('#')) if r in rels}
+    return want, sources
+
+def tables_data(text): return [ln for ln in text.splitlines() if not ln.startswith('#')]   # a table's lines less its comment lines
+
+def profile_differs(mapout, factsout, pairsout):
+    """None when each table the targeted scan wrote is the profile's byte for byte (comment lines left out; a table the profile does not have is not compared), else why not"""
+    for name, path in (('shader_map.tsv', mapout), ('shader_facts.tsv', factsout), ('shader_pairs.tsv', pairsout)):
+        p = str(GAME.table(name))
+        if not path or not os.path.isfile(p): continue
+        with open(p, encoding='utf-8', errors='replace', newline='') as f: want = tables_data(f.read())
+        with open(path, encoding='utf-8', errors='replace', newline='') as f: got = tables_data(f.read())
+        if want != got:
+            n = next((i for i, (a, b) in enumerate(zip(want, got)) if a != b), min(len(want), len(got)))
+            a, b = (want[n] if n < len(want) else '(end)'), (got[n] if n < len(got) else '(end)')
+            return f"made a {name} that differs from the profile's ({len(got)} lines against {len(want)}; first difference at line {n + 1}: profile {a[:100]!r}, targeted {b[:100]!r})"
+    return None
+
 def main():
+    mapout, factsout = sys.argv[4:6]; pairsout = sys.argv[6] if len(sys.argv) > 6 else None
+    if os.environ.get('DM_SPLIT_TARGETED') == '1':
+        try:
+            scan(True); why = profile_differs(mapout, factsout, pairsout)
+        except Untargeted as e: why = str(e)
+        except SystemExit as e: why = f'the targeted scan stopped ({e.code})'
+        except Exception as e: why = f'the targeted scan failed ({type(e).__name__}: {e})'   # (the full scan then runs, and ends the way it always did if the failure was not the targeted one's)
+        if why is None: print('targeted split: its tables are the profile\'s, byte for byte', flush=True); return
+        print(f'targeted split: not taken, {why}; every file is scanned', flush=True)
+    scan(False)
+
+def scan(targeted=False):
     romfs_l, main_l, pkg, mapout, factsout = sys.argv[1:6]
     pairsout = sys.argv[6] if len(sys.argv) > 6 else None
     # Several versions (base game + update): the RomFS and main arguments are comma-separated and paired one to one; the output is their union (keys are content hashes, shaders shared by versions appear once).
@@ -769,15 +830,20 @@ def main():
             if not names: red(f'the profile has shader_ue_decode on, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
             for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
         results.append(('main', {skey(c, k): (w, s, c, k) for w, s, c, k in found}, var_pairs(found), {}))
+    want = sources = None   # TARGETED: the RomFS files and map sources of the profile (targeted_inputs); only one version of the game is taken this way
+    if targeted:
+        if len(romfs_v) != 1: raise Untargeted('the split has more than one version of the game')
+        want, sources = targeted_inputs(files)
     zdicts = {k: v for r in romfs_v for k, v in zs_dicts(r).items()}   # Tears of the Kingdom's zstd dictionaries (zs_dicts)
     keys = {}
     # First pass: every file; Unity bundles carry type trees, and the Shader trees are collected on the way. Second pass: Unity serialized files without type trees are scanned again with the borrowed trees
     J = int(os.environ.get('J', '8'))
     big = [j for p, r in files for j in (linkdata_jobs(p, r) or [])]   # Three Houses' 6.9 GB DATA1.bin: one job per range of entries, not one read of the whole file
     pak_jobs, paks = kpka_jobs(files)   # Monster Hunter Rise's PAKs: the newest copy of each path, in ranges of entries
-    tr_jobs, trp = trpfs_jobs(files)   # Pokémon Legends: Z-A's Trinity packs (data.trpfs and its index data.trpfd), decoded by the game's own Oodle in the Mac host
+    tr_jobs, trp = trpfs_jobs(files, sources=sources)   # Pokémon Legends: Z-A's Trinity packs (data.trpfs and its index data.trpfd), decoded by the game's own Oodle in the Mac host
     big += pak_jobs + tr_jobs
     files = [(p, r) for p, r in files if not linkdata_jobs(p, r) and p not in paks and p not in trp]
+    if targeted: big, files = [j for j in big if j[1] in want], [f for f in files if f[1] in want]   # TARGETED: only the files that hold the profile's shaders
     results += pmap(J, scan_file, big + files, (common, {}, zdicts))
     trees, defer = {}, []
     for rel, uniq, pr, extra in results:

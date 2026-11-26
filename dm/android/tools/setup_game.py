@@ -338,7 +338,7 @@ def main():
             env.update(DM_OODLE_HOST=tool('dmoodle'), DM_OODLE_MODULES=pat, DM_OODLE_FILTER='BNSH')
         run([py, os.path.join(DM, 'gfx/tools/shader_split.py'), romfs, '-', pkg,   # ('-': no main; this game has no shaders in it)
              os.path.join(a.work, 'shader_map.found.tsv'), os.path.join(a.work, 'shader_facts.found.tsv'), os.path.join(a.work, 'shader_pairs.found.tsv')],
-            env=dict(env, DM_NVN_CAPTURE=os.path.join(a.out, 'nvn_capture')))
+            env=dict(env, DM_NVN_CAPTURE=os.path.join(a.out, 'nvn_capture'), DM_SPLIT_TARGETED='1'))
         from_app = True   # (steps 1-3 done: on to the translation)
     elif not resumed:
         step(1)
@@ -429,7 +429,7 @@ def main():
             env.update(DM_OODLE_HOST=tool('dmoodle'), DM_OODLE_MODULES=pat, DM_OODLE_FILTER='BNSH')
         run([py, os.path.join(DM, 'gfx/tools/shader_split.py'), romfs, main_src or os.path.join(exefs, 'main'), pkg,
              os.path.join(a.work, 'shader_map.found.tsv'), os.path.join(a.work, 'shader_facts.found.tsv'), os.path.join(a.work, 'shader_pairs.found.tsv')],
-            env=dict(env, DM_NVN_CAPTURE=os.path.join(a.out, 'nvn_capture')))
+            env=dict(env, DM_NVN_CAPTURE=os.path.join(a.out, 'nvn_capture'), DM_SPLIT_TARGETED='1'))
 
         import json
         json.dump({'out': a.out, 'game': env.get('DM_GAME'), 'games': games, 'files': files}, open(state, 'w', encoding='utf-8'))
