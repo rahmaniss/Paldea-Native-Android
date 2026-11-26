@@ -1,0 +1,64 @@
+name: Build APK
+on:
+  workflow_dispatch:
+    inputs:
+      game:
+        description: "Game title ID"
+        default: "01001F5010DFA000"
+      turnip:
+        description: "Include custom Vulkan drivers (libadrenotools)"
+        type: boolean
+        default: true
+
+env:
+  WORK: /home/runner/psa-build
+  KS: ${{ secrets.DEBUG_KEYSTORE_B64 }}
+  GAME: ${{ inputs.game }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the game profile
+        run: |
+          python3 dm/games/game.py list | tee /tmp/games.txt
+          grep -qi "$GAME" /tmp/games.txt || { echo "no profile for $GAME in dm/games/"; exit 1; }
+          python3 dm/games/game.py "$GAME" app_name
+          python3 dm/games/game.py header "$GAME" /tmp/game_profile.h
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /opt/ghc
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl python3-venv build-essential cmake ninja-build
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WORK }}
+            !${{ env.WORK }}/debug.keystore
+            !${{ env.WORK }}/*.apk
+          key: psa-${{ env.GAME }}-${{ hashFiles('scripts/build_apk_pc.sh') }}
+
+      - name: Restore signing key
+        if: ${{ env.KS != '' }}
+        run: |
+          mkdir -p "$WORK"
+          echo "$KS" | base64 -d > "$WORK/debug.keystore"
+
+      - name: Build
+        run: |
+          export GAME
+          if [ "${{ inputs.turnip }}" = "false" ]; then export TURNIP=0; fi
+          bash scripts/build_apk_pc.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ env.WORK }}/*.apk
+          if-no-files-found: error
