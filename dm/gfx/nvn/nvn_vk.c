@@ -1674,6 +1674,16 @@ static uint64_t report_time(sub_t *s, uint32_t q, uint64_t now_ticks) {   // a r
     if (r < g_rt_last) r = g_rt_last; g_rt_last = r;
     return r;
 }
+// DM_VK_COUNTER=frozen (laracomp-za exec.c, LARECOMP_VK_COUNTER=frozen: "one value per presented frame"): every counter report of one presented frame carries the same
+//   timestamp, so the game computes no GPU time from the reports around its work and its dynamic resolution stays at full. Our translation's passes are in the GPU time the
+//   game saw otherwise. Unset: the reports as before (DM_VK_REPORT_TS=0: the CPU's time at completion)
+static _Atomic uint32_t g_ctr_present;   // presents so far (mtl_present), stamped on each report where it is recorded (post_op.v)
+static int counter_frozen(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("DM_VK_COUNTER"); v = e && !strcmp(e, "frozen");
+        if (v) VLOG("counter reports: frozen, one timestamp for each presented frame (DM_VK_COUNTER=frozen)"); }
+    return v;
+}
 static void wb_apply(sub_t *s) {
     int wrote = 0;
     for (int i = 0; i < s->nwb; i++) {
@@ -1695,7 +1705,12 @@ static void post_apply(sub_t *s) {
         post_op *o = &s->post[i];
         if (o->kind == 1) { if (o->mode == 1) *o->val += o->v; else *o->val = o->v; }
         else {   // counter report {value, timestamp}: timestamps on the guest's 19.2 MHz clock; occlusion counts are not measured yet (reported as visible)
-            uint64_t t = gpu_ticks(); if (o->q && g_rtq) t = report_time(s, o->q, t); else if (t < g_rt_last) t = g_rt_last;   // (report_ts)
+            uint64_t t = gpu_ticks();
+            if (counter_frozen()) {   // (DM_VK_COUNTER=frozen: the first report of a presented frame sets the time all of its reports carry; o->v: the present count where it was recorded)
+                static uint32_t fz_frame; static uint64_t fz_ts; static int fz_set;
+                if (!fz_set || o->v != fz_frame) { fz_set = 1; fz_frame = o->v; fz_ts = t; }
+                t = fz_ts; }
+            else if (o->q && g_rtq) t = report_time(s, o->q, t); else if (t < g_rt_last) t = g_rt_last;   // (report_ts)
             uint64_t rec[2] = { o->type == NVN_COUNTER_TYPE_SAMPLES_PASSED ? 0xffffu : (o->type == 0 || o->type == 0x10) && !DM_GAME_RENDER_COND ? t : 0, t };
             memcpy((void *)o->addr, rec, sizeof rec);
         }
@@ -6959,7 +6974,7 @@ void mtl_exec(const uint8_t *p) {
                     q = ++g_sub->nrq;
                     if (P.open) g_sub->rq_pend++; else vkCmdWriteTimestamp(CB(), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_rtq, (uint32_t)(g_sub - g_subs) * RQ_PER + q - 1);
                 }
-                post((post_op){2, NULL, 0, 0, ad, (uint32_t)t, q}); break; }
+                post((post_op){2, NULL, 0, atomic_load(&g_ctr_present), ad, (uint32_t)t, q}); break; }   // (v: the present count, DM_VK_COUNTER=frozen)
             case OP_RESET_COUNTER: case OP_RENDER_COND: break;
             case OP_FENCE_SYNC: { sync_t *s; memcpy(&s, a, 8); s->fence = g_fence + 1; s->fenced = 2; break; }   // (2: fenced inside a command list, DM_VK_PROF tells them apart)
             case OP_CLEAR_BUF: { const p_clear_buf *cb = (const p_clear_buf *)a; mtl_sub_fill(cb->addr, cb->size, cb->value); break; }
@@ -8672,6 +8687,7 @@ void nvn_fgr_arm_series(void) { fgr_arm_series(atomic_load(&g_present_n)); }   /
 int nvn_on_replay_thread(void) __attribute__((weak));   // (hle_nvn.c: 1 on the replay thread, DM_NVN_ASYNC)
 int nvn_hint_wall(void) __attribute__((weak));          // (hle_nvn.c: DM_HINT_WORK=wall)
 uint64_t mtl_present(const tex_t *t, double period_s, const int crop[4]) {
+    atomic_fetch_add(&g_ctr_present, 1);   // (DM_VK_COUNTER=frozen: the counter reports after this one are the next frame's)
     { static _Atomic int first; if (!atomic_exchange(&first, 1)) { dm_boot_mark("first present"); atomic_store(&g_pw_playing, 1); } }   // (the prewarm builds one pipeline a present from here)
     uint64_t hp_scene = g_hp_scene_seq == g_hp_seq + 1;   // (HUD-free: this frame's scene copy was made; read before hp_learn starts the next frame)
     // (the copy was taken at the pass learnt from the frame before; this frame's own split can differ (a title screen's passes change from frame to frame):
